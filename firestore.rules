@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}/settings
+    // Document ID: private
+    // Fields:
+    //   - keys: map (optional) - API keys for different platforms
+    //   - models: map (optional) - Selected models for different platforms
+    //   - updatedAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidSettings(data) {
+      return data.keys is map &&
+             data.models is map &&
+             data.updatedAt is timestamp &&
+             (!data.keys().hasAny(['customTeam']) || data.customTeam is list) &&
+             (!data.keys().hasAny(['knowledgeFiles']) || data.knowledgeFiles is list) &&
+             (!data.keys().hasAny(['loopingEnabled']) || data.loopingEnabled is bool) &&
+             (!data.keys().hasAny(['maxLoops']) || data.maxLoops is int);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId}/settings/private {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidSettings(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+
+    // Knowledge Base sources (files, pasted text, images, and external links), one document
+    // per source so a large file doesn't risk exceeding a single document's size limit.
+    match /users/{userId}/knowledgeSources/{sourceId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Recently deleted knowledge sources (soft-delete target for "Start Completely Fresh"),
+    // kept so an accidental reset can be restored from the Knowledge Base card.
+    match /users/{userId}/knowledgeTrash/{sourceId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Chat History: one document per Agent Comparison / Multi Agent Team conversation.
+    match /users/{userId}/history/{historyId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // My Teams: saved Team Agents rosters the user can reuse.
+    match /users/{userId}/teams/{teamId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // My Files: saved Knowledge Base setups (full source content embedded, not just
+    // references — see the SavedKnowledgeSet comment in App.tsx for why) the user can
+    // reload into a future conversation without re-uploading.
+    match /users/{userId}/knowledgeSets/{setId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Client/Project Presets: a bundled team + knowledge set the user can apply in one action.
+    match /users/{userId}/presets/{presetId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Minimal shareable read access (Phase 3 roadmap, round 2, item #3): a deliberately
+    // small, explicit slice — not the live editable run — snapshotted at share time.
+    // Publicly readable by design (that's the point of a share link), but only a signed-in
+    // user can create one, and it's immutable afterward: no update or delete via the
+    // client, so a share link can't be silently altered post-hoc. Deliberately read-only —
+    // this does NOT implement commenting; see the in-app notice on the shared view for why.
+    match /sharedRuns/{token} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      // The only permitted update is the owner flipping `revoked` to true — every other
+      // field must stay exactly as created, so a link can't be silently edited post-hoc.
+      allow update: if request.auth != null
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["revoked"])
+        && request.resource.data.revoked == true;
+      allow delete: if false;
+    }
+
+    // Rolling "how this team works" notes, keyed by a fingerprint of the roster —
+    // read at session start, appended after each completed run (max 5 kept).
+    match /users/{userId}/teamMemory/{fingerprint} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

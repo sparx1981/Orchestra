@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "userSettings": {
+      "title": "User Settings",
+      "description": "Private settings and API keys for a user",
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "object",
+          "description": "Encrypted or private API keys",
+          "properties": {
+            "gemini": { "type": "string" },
+            "anthropic": { "type": "string" },
+            "perplexity": { "type": "string" },
+            "grok": { "type": "string" }
+          }
+        },
+        "models": {
+          "type": "object",
+          "description": "Preferred models for each agent",
+          "properties": {
+            "gemini": { "type": "string" },
+            "anthropic": { "type": "string" },
+            "perplexity": { "type": "string" },
+            "grok": { "type": "string" }
+          }
+        },
+        "customTeam": {
+          "type": "array",
+          "description": "Custom configured multi-agent team",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "provider": { "type": "string" },
+              "model": { "type": "string" },
+              "name": { "type": "string" },
+              "persona": { "type": "string" }
+            }
+          }
+        },
+        "knowledgeFiles": {
+          "type": "array",
+          "description": "Uploaded knowledge base files scanned by custom agents",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "content": { "type": "string" },
+              "size": { "type": "number" },
+              "uploadedAt": { "type": "string" }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/settings/private": {
+      "schema": "userSettings",
+      "description": "Private settings for a specific user"
+    }
+  }
+}

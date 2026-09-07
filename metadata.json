@@ -1,0 +1,8 @@
+{
+  "name": "Orchestra",
+  "description": "Multi-agent AI platform to collaborate, compare models, and generate high-detail product specifications for vibe coded applications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
