@@ -578,6 +578,72 @@ estimated.
   review pass (gap #3) and an explicit named-model "Cross-Model Validation Loop" mode
   (gap #4) are still open, larger changes if wanted next.
 
+## 13. File manifest, stack validation from the real codebase, incremental display, and a stricter Word-doc check
+
+Verified after these: `tsc --noEmit` clean, `npm run build` clean, 325/325 tests pass (2 new
+tests providing genuinely stronger DOCX validation). Also caught and fixed a real bug while
+implementing this — see below.
+
+**New File Manifest section.** Every spec now includes a dedicated Section 8 ("File
+Manifest — New & Modified Files", pushing the Implementation Playbook to Section 9): a
+table of every file the work touches, each row's Status exactly "New", "Modified", or
+"Deleted", with a real path and a concrete change summary — never just "update this file."
+For an update with a codebase attached, it's required to cross-reference the actual file
+tree and use real existing paths for anything "Modified"; without one, it must flag
+assumptions rather than invent paths; for a new app, everything is "New" and the table
+doubles as the build manifest.
+
+**A real bug found and fixed: the tech-stack question was still being asked despite a repo
+being attached.** Root cause: attaching a GitHub repo or zip to the knowledge base and
+attaching it as *the existing codebase* were two separate steps — you could do the first
+without realizing the second (a dropdown) existed, and without it, the system had no way to
+know the codebase you'd already provided was meant to answer that exact question. Fixed by
+auto-selecting the existing-codebase file whenever there's exactly one GitHub/zip source
+attached and "Update Existing App" is on — no extra click needed in the common case (still
+requires an explicit pick if there's more than one, since then the right answer genuinely
+isn't obvious). Also strengthened the drafting instructions to require citing concrete
+evidence from the actual codebase ("package.json lists react ^18.2.0...") rather than a
+vague description, and added an explicit "don't ask about stack" reminder to both pre-flight
+checks, plus a general reminder not to ask about anything any other attached knowledge file
+would reasonably already answer.
+
+**Sections now display as they complete, not all at once at the end.** This was a real
+architectural gap, not a small tweak: previously `runSpecGeneration` built everything in
+local variables and called `setSpec()` exactly once, after drafting, review, and the
+consistency sweep had *all* finished — meaning a failure at any point during that entire
+pipeline showed the user nothing at all, discarding whatever had already been completed.
+Restructured around a `pushLiveSpec()` call fired after every section drafts, after every
+section's review fully resolves, and after each consistency-sweep fix, so the screen shows
+real progress throughout and an error now reports how many sections survived rather than
+just failing silently. **Caught a real bug while building this**: my first pass declared the
+progress-tracking arrays *inside* the `try` block while the `catch` block (which needed to
+report how many sections completed) was outside it — TypeScript didn't catch this because
+a second, accidentally duplicate, inner declaration silently shadowed the outer one rather
+than raising a scope error, which would have made every error message report "0 sections
+completed" regardless of actual progress. Fixed by declaring these once, before the `try`.
+
+**Word document export — validated more rigorously, not just re-confirmed.** Added tests
+that actually unzip the generated `.docx` with `jszip` (rather than only checking the file
+starts with the zip signature bytes) and inspect the real internal structure: the required
+OOXML parts are present, `word/document.xml` is well-formed with matched paragraph tags,
+the actual title and section text genuinely appear in it, and a markdown table renders as a
+real `<w:tbl>` element rather than flattened text. This is a meaningfully stronger check
+than before — a truncated or structurally broken zip would pass the old signature-byte
+check but fail this one. Also re-verified visually by rendering a spec with the new File
+Manifest table through LibreOffice.
+
+### Known limitations of this round
+- The auto-select-existing-codebase fix only fires when there's exactly one candidate
+  source — with two or more GitHub/zip sources attached, you still need to pick manually,
+  since guessing wrong there would be worse than asking.
+- Incremental display pushes on section-boundaries (drafted, review-resolved, sweep-fixed),
+  not on every single model call — an error mid-review-round for a section still loses
+  that section's specific in-progress round, though every section completed before it is
+  preserved.
+- The stricter DOCX test checks structural well-formedness and content presence; it does
+  not (and can't, without a real Word install) confirm Word itself renders it pixel-perfect
+  — the LibreOffice visual render is still the closest proxy for that.
+
 ## Before you deploy
 
 - Get a fresh **OpenAI API key** (`https://platform.openai.com/api-keys`) and paste it into

@@ -34,6 +34,7 @@ export interface ProductSpecSection {
     | "data_models"
     | "api_contracts"
     | "edge_cases"
+    | "file_manifest"
     | "vibe_playbook"
     | string;
   heading: string;

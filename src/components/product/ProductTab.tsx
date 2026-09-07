@@ -200,6 +200,19 @@ export function ProductTab({
     }
   }, [existingCodebaseFileId, codebaseKnowledgeFiles]);
 
+  // Auto-select the existing codebase when it's unambiguous: the user has switched to
+  // "Update Existing App" and attached exactly one GitHub/zip source, so there's only one
+  // sensible answer to "which file is the existing codebase?" — requiring an extra manual
+  // pick here is exactly the kind of easy-to-miss step that leads to the codebase being
+  // attached but never actually treated as ground truth. Left unset (user's explicit
+  // choice to clear it) when there are zero or multiple candidates, since then the answer
+  // genuinely isn't obvious and guessing wrong is worse than asking.
+  useEffect(() => {
+    if (projectType === "update" && !existingCodebaseFileId && codebaseKnowledgeFiles.length === 1) {
+      setExistingCodebaseFileId(codebaseKnowledgeFiles[0].id);
+    }
+  }, [projectType, existingCodebaseFileId, codebaseKnowledgeFiles]);
+
   // Pre-flight clarifying questions, asked by the lead agent BEFORE drafting starts when
   // the app idea is ambiguous on something that would genuinely change the architecture or
   // scope. "idle" = not asking; "checking" = the lead agent is deciding whether to ask;
@@ -349,8 +362,11 @@ Do not write the full spec yet — produce a concise, inspiring, well-structured
           ? `This is an UPDATE to an existing app; its real codebase ("${existingCodebaseFile.name}") is attached and will be provided in full during drafting — do NOT ask about its current stack, file structure, or architecture, that's already known. Instead, focus any questions on integration constraints, migration/rollout concerns, or scope boundaries for the update itself.`
           : `This is an UPDATE to an existing app, but no codebase was attached to ground it on. Prioritize asking about the current system's architecture, stack, and constraints where genuinely load-bearing — that's more valuable to ask now than after drafting has already assumed something wrong.`
         : `This is a NEW application being built from scratch.`;
+      const otherKbNote = contentBearingKnowledgeFiles.length > (existingCodebaseFile ? 1 : 0)
+        ? ` The product owner has also attached ${contentBearingKnowledgeFiles.length - (existingCodebaseFile ? 1 : 0)} other knowledge base file(s) (docs, specs, or reference material), which will be fully available during drafting — don't ask about anything one of those would reasonably already answer.`
+        : "";
       const checkInstruction = `You are the Lead Product Architect (${leadAgent.name}). Before drafting a full production spec, decide whether you genuinely need to ask the product owner 1-4 clarifying questions first.
-${projectTypeNote}
+${projectTypeNote}${otherKbNote}
 Only ask about things that would meaningfully change the architecture or scope depending on the answer (e.g. single-user vs. multi-tenant, offline/local-first requirements, auth model, monetization, target platform). Do NOT ask anything you could reasonably assume a sensible default for — most ideas need zero or one question.
 Respond with ONLY a raw JSON object, no markdown fences, no commentary:
 { "needsClarification": boolean, "questions": ["question 1", "question 2"] }`;
@@ -405,10 +421,13 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
           ? `This is an UPDATE to an existing app; its real codebase ("${existingCodebaseFile.name}") is attached and will be provided in full during drafting — don't ask about its current stack or structure, that's already known.`
           : `This is an UPDATE to an existing app, but no codebase was attached — questions about the current system's architecture/stack are still fair game if genuinely load-bearing.`
         : `This is a NEW application being built from scratch.`;
+      const otherKbNote = contentBearingKnowledgeFiles.length > (existingCodebaseFile ? 1 : 0)
+        ? ` The product owner has also attached ${contentBearingKnowledgeFiles.length - (existingCodebaseFile ? 1 : 0)} other knowledge base file(s), fully available during drafting — don't ask about anything one of those would reasonably already answer.`
+        : "";
       const qaContext = allSoFar
         .map(q => `Q: ${q.question}\nA: ${q.answer || "(left blank — assume a sensible default)"}`)
         .join("\n\n");
-      const instruction = `You are the Lead Product Architect (${leadAgent.name}). ${projectTypeNote} You already asked the product owner these clarifying questions and got these answers:\n${qaContext}\n\nDecide whether you have any FURTHER genuinely important clarifying questions before drafting — do NOT repeat anything already asked above, and only ask if something else would meaningfully change the architecture or scope.
+      const instruction = `You are the Lead Product Architect (${leadAgent.name}). ${projectTypeNote}${otherKbNote} You already asked the product owner these clarifying questions and got these answers:\n${qaContext}\n\nDecide whether you have any FURTHER genuinely important clarifying questions before drafting — do NOT repeat anything already asked above, and only ask if something else would meaningfully change the architecture or scope.
 Respond with ONLY a raw JSON object, no markdown fences, no commentary:
 { "needsClarification": boolean, "questions": ["question 1", "question 2"] }`;
       const raw = await callAgent(leadAgent, `APP IDEA:\n${prompt.trim()}`, instruction);
@@ -454,6 +473,13 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
     abortControllerRef.current = controller;
     const signal = controller.signal;
 
+    // Declared here (outside the try block) so the catch block below can still report how
+    // many sections were completed before an error — that's the whole point of surfacing
+    // partial progress on failure, not just on success.
+    const sectionsRef: ProductSpecSection[] = [];
+    const questionsRef: NonNullable<ProductSpec["openQuestions"]> = [];
+    const notesRef: string[] = [];
+
     try {
       const answeredPreflight = preflight.filter(q => q.answer);
       const preflightContext = answeredPreflight.length > 0
@@ -477,7 +503,7 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
       // which is actively wrong advice for an update to something already in production.
       const projectTypeContext = projectType === "update"
         ? existingCodebaseFile
-          ? `\n\n⚠️ PROJECT TYPE: UPDATE TO AN EXISTING APPLICATION — READ BEFORE DRAFTING ANY SECTION ⚠️\nThis is an update to an application already in production, NOT a greenfield build. The existing codebase is attached below as "${existingCodebaseFile.name}" and reflects the CURRENT real system — treat it as ground truth, not inspiration. Wherever a section's instructions below say to "recommend" a stack or "design" an architecture, instead DESCRIBE the existing one found in the codebase and specify only what changes or gets added — do not propose a different stack or a rewrite unless the app idea explicitly asks for one. Be explicit, in every section, about exactly what changes, what stays exactly as-is, and how new work integrates with the existing code (real file/module names, existing patterns to follow, existing endpoints/schemas to extend rather than replace).`
+          ? `\n\n⚠️ PROJECT TYPE: UPDATE TO AN EXISTING APPLICATION — READ BEFORE DRAFTING ANY SECTION ⚠️\nThis is an update to an application already in production, NOT a greenfield build. The existing codebase is attached below as "${existingCodebaseFile.name}" and reflects the CURRENT real system — treat it as ground truth, not inspiration. Wherever a section's instructions below say to "recommend" a stack or "design" an architecture, instead VALIDATE AND STATE the existing one found in the codebase: name the actual framework, language, and key dependencies with the specific evidence for each (e.g. "package.json lists react ^18.2.0, express ^4.18.0, and prisma ^5.10.0" — not a vague guess), then specify only what changes or gets added. Do not propose a different stack or a rewrite unless the app idea explicitly asks for one. Do NOT ask the product owner what the underlying tech stack is — it is attached below; read it. Be explicit, in every section, about exactly what changes, what stays exactly as-is, and how new work integrates with the existing code (real file/module names, existing patterns to follow, existing endpoints/schemas to extend rather than replace).`
           : `\n\n⚠️ PROJECT TYPE: UPDATE TO AN EXISTING APPLICATION — READ BEFORE DRAFTING ANY SECTION ⚠️\nThis is an update to an application already in production, NOT a greenfield build — but no existing codebase was attached to ground it on. Do NOT assume a specific existing stack, file structure, or architecture. Where a section's instructions below say to "recommend" a stack, instead state clearly that the existing stack is unknown and describe the update in stack-agnostic terms. Prefer flagging a genuine unknown via the QUESTIONS_FOR_USER mechanism (see below) over guessing at anything architecturally significant about the current system.`
         : "";
 
@@ -525,6 +551,54 @@ Output strictly raw JSON without markdown code fences.`;
       } catch (e) {
         logDebug("warn", "Meta parsing used fallback", e);
       }
+
+      // Live incremental spec: pushed to `spec` state after every section finishes drafting
+      // or reviewing (not on every intermediate review round — that would mean dozens of
+      // updates per section), so the screen shows real progress as it happens and, just as
+      // important, whatever's been produced so far survives an error partway through
+      // instead of being silently discarded because nothing was ever shown until the very
+      // end. `sectionsRef`/`questionsRef`/`notesRef` (declared above, outside the try block,
+      // so the catch block can still read them) are mutated in place by the loops below and
+      // read fresh each time pushLiveSpec() runs.
+      const specId = `spec_${Date.now()}`;
+      const buildGroundedExcerpt = (f: KnowledgeFile): string => {
+        if (f.sourceType === "github" || f.sourceType === "codebase_zip") {
+          // The digest built by codebaseIngest.ts starts with "# Codebase: <label>" then
+          // "N total file(s) found..." — pulling those lines (rather than raw file content,
+          // which would be far too long for a title page) is concrete proof the actual
+          // repo/zip contents were read, not just that a source was attached.
+          return f.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 300);
+        }
+        return f.content.trim().replace(/\s+/g, " ").slice(0, 200);
+      };
+      const groundedSources = contentBearingKnowledgeFiles.map(f => ({
+        name: f.name,
+        sourceType: f.sourceType,
+        url: f.sourceType === "github" ? f.url : undefined,
+        excerpt: buildGroundedExcerpt(f),
+      }));
+      const pushLiveSpec = () => {
+        setSpec({
+          id: specId,
+          title: parsedMeta.title,
+          subtitle: parsedMeta.subtitle,
+          targetTool: selectedTool,
+          appConcept: parsedMeta.appConcept,
+          createdAt: new Date().toISOString(),
+          sections: [...sectionsRef],
+          groundedSourceCount: contentBearingKnowledgeFiles.length,
+          groundedSourceIds: contentBearingKnowledgeFiles.map(f => f.id),
+          groundedSources: groundedSources.length > 0 ? groundedSources : undefined,
+          facilitatorAgentName: leadAgent.name,
+          openQuestions: questionsRef.length > 0 ? [...questionsRef] : undefined,
+          preflightQuestions: preflight.length > 0 ? preflight : undefined,
+          generationDepth,
+          consistencyNotes: notesRef.length > 0 ? [...notesRef] : undefined,
+          projectType,
+          groundedOnExistingCodebase: existingCodebaseFile?.name,
+        });
+      };
+      pushLiveSpec(); // shows the title/subtitle immediately, sections empty for now
 
       // Step 2: Define Sections to Generate
       const sectionConfigs: {
@@ -624,12 +698,35 @@ Audit the specs drafted by ${leadAgent.name}, ${techAgent.name}, and ${uxAgent.n
 - **Security & Secret Protection**: Explicit rules keeping API keys hidden from client-side code.`,
         },
         {
+          key: "file_manifest",
+          heading: "8. File Manifest — New & Modified Files",
+          category: "engineering",
+          agent: techAgent,
+          instruction: `You are the Principal System Architect (${techAgent.name}) drafting Section 8: File Manifest — New & Modified Files for "${parsedMeta.title}".
+This section exists so a developer or coding agent knows exactly which files to touch and where, with zero ambiguity about what's new versus what's being changed. Format as a Markdown table using exactly this column structure:
+
+| File Path | Status | Purpose / Change Summary |
+| --- | --- | --- |
+
+- **File Path**: the real, exact relative path (e.g. \`src/components/TaskCard.tsx\`), consistent with the directory structure defined in the Tech Stack & Architecture section.
+- **Status**: exactly one of "New", "Modified", or "Deleted" (use "Deleted" only if a file genuinely needs removing).
+- **Purpose / Change Summary**: for "New" files, what the file is for; for "Modified" files, precisely what changes and why — never just "update this file"; for "Deleted" files, why it's being removed and what replaces it.
+
+Every file touched by this work must appear in the table — a developer should be able to work from this table alone to know what to open versus what to create. ${
+            projectType === "update"
+              ? existingCodebaseFile
+                ? `This is an UPDATE and the real existing file tree is provided in the knowledge base context under "${existingCodebaseFile.name}" — cross-reference it directly: any file you're changing that already appears there MUST be marked "Modified" using its exact real path copied from that tree, never renamed or guessed. Only mark a file "New" if it genuinely does not appear anywhere in the existing tree.`
+                : `This is an UPDATE, but no existing codebase was attached, so you don't have the real file tree — do NOT invent specific existing file paths you can't actually know. Instead describe modified files by their likely existing role (e.g. "the file that currently defines the checkout flow"), clearly flagged as an assumption, and mark unambiguously New files as "New" regardless.`
+              : `This is a NEW application, so every row's Status will read "New" — treat this table as the definitive build manifest for what to scaffold.`
+          }`,
+        },
+        {
           key: "vibe_playbook",
-          heading: `8. ${toolInfo.label} Implementation Playbook`,
+          heading: `9. ${toolInfo.label} Implementation Playbook`,
           category: "execution",
           agent: qaAgent,
-          instruction: `You are the Vibe Coding Specialist (${qaAgent.name}) drafting Section 8: ${toolInfo.label} Implementation Playbook for "${parsedMeta.title}".
-Synthesize the entire team's agreements into a phased, copy-paste playbook tailored for ${toolInfo.label}:
+          instruction: `You are the Vibe Coding Specialist (${qaAgent.name}) drafting Section 9: ${toolInfo.label} Implementation Playbook for "${parsedMeta.title}".
+Synthesize the entire team's agreements — including the File Manifest — into a phased, copy-paste playbook tailored for ${toolInfo.label}:
 - **Phase 1: Project Scaffolding & Setup** (Copyable prompt for types, dependencies, Tailwind config).
 - **Phase 2: Core Components & Layout Shell** (Copyable prompt for layout, responsive shell, empty states).
 - **Phase 3: State Management & Primary Flow** (Copyable prompt for interactive state, forms, and business logic).
@@ -638,11 +735,11 @@ Synthesize the entire team's agreements into a phased, copy-paste playbook tailo
         },
       ];
 
-      const draftedSections: ProductSpecSection[] = [];
+      const draftedSections: ProductSpecSection[] = sectionsRef;
       // Hoisted above the drafting loop (not just the review loop below) so a drafting
       // agent's own genuine questions land in the same Open Questions list as the
       // reviewer's — the user shouldn't have to know or care which phase raised something.
-      const collectedQuestions: NonNullable<ProductSpec["openQuestions"]> = [];
+      const collectedQuestions: NonNullable<ProductSpec["openQuestions"]> = questionsRef;
 
       // Appended to every section's drafting instruction: gives the drafting agent itself
       // — not just the later reviewer — a way to flag a genuine ambiguity it personally
@@ -696,6 +793,7 @@ Synthesize the entire team's agreements into a phased, copy-paste playbook tailo
           authorAgentName: cfg.agent.name,
           content,
         });
+        pushLiveSpec(); // show this section on screen the moment it's drafted, before review even starts
       }
 
       // Step 3: Cross-Agent Review & Reconciliation (skipped in "quick" mode). Each section
@@ -706,7 +804,7 @@ Synthesize the entire team's agreements into a phased, copy-paste playbook tailo
       // instructions gets one revision pass; anything that genuinely needs a
       // product-owner decision is surfaced as an open question instead of being silently
       // guessed at.
-      const consistencyNotes: string[] = [];
+      const consistencyNotes: string[] = notesRef;
       // Cap on review→revise rounds per section (see runSpecGeneration's docs): most
       // sections converge in 1-2 rounds; this exists to bound worst-case cost rather than
       // loop indefinitely on a genuine, unresolvable disagreement.
@@ -837,6 +935,7 @@ ${review.revisionInstructions || "Tighten technical accuracy and resolve any inc
             reviewRounds: round,
             reviewCrossProvider: crossProvider,
           };
+          pushLiveSpec(); // show this section's finished review state once it's fully resolved (not on every intermediate round)
         }
 
         // Step 4: Final Consistency Sweep. The per-section review above is order-dependent
@@ -864,6 +963,7 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
             const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
             const sweep: { conflicts?: { sectionHeading: string; fixInstruction: string }[]; minorNotes?: string[] } = JSON.parse(cleaned);
             (sweep.minorNotes || []).forEach(n => { if (n && n.trim()) consistencyNotes.push(n.trim()); });
+            if ((sweep.minorNotes || []).length > 0) pushLiveSpec();
             for (const conflict of sweep.conflicts || []) {
               const idx = draftedSections.findIndex(s => s.heading === conflict.sectionHeading);
               if (idx === -1 || !conflict.fixInstruction) continue;
@@ -884,6 +984,7 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
                   reviewVerdict: "revised",
                   reviewNotes: sec.reviewNotes ? `${sec.reviewNotes}; ${conflict.fixInstruction}` : conflict.fixInstruction,
                 };
+                pushLiveSpec();
               } catch (e) {
                 logDebug("warn", `Consistency sweep fix failed for "${sec.heading}"`, e);
               }
@@ -894,54 +995,20 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
         }
       }
 
-      const buildGroundedExcerpt = (f: KnowledgeFile): string => {
-        if (f.sourceType === "github" || f.sourceType === "codebase_zip") {
-          // The digest built by codebaseIngest.ts starts with "# Codebase: <label>" then
-          // "N total file(s) found..." — pulling those lines (rather than raw file content,
-          // which would be far too long for a title page) is concrete proof the actual
-          // repo/zip contents were read, not just that a source was attached.
-          return f.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 300);
-        }
-        return f.content.trim().replace(/\s+/g, " ").slice(0, 200);
-      };
-      const groundedSources = contentBearingKnowledgeFiles.map(f => ({
-        name: f.name,
-        sourceType: f.sourceType,
-        url: f.sourceType === "github" ? f.url : undefined,
-        excerpt: buildGroundedExcerpt(f),
-      }));
-
-      const newSpec: ProductSpec = {
-        id: `spec_${Date.now()}`,
-        title: parsedMeta.title,
-        subtitle: parsedMeta.subtitle,
-        targetTool: selectedTool,
-        appConcept: parsedMeta.appConcept,
-        createdAt: new Date().toISOString(),
-        sections: draftedSections,
-        groundedSourceCount: contentBearingKnowledgeFiles.length,
-        groundedSourceIds: contentBearingKnowledgeFiles.map(f => f.id),
-        groundedSources: groundedSources.length > 0 ? groundedSources : undefined,
-        facilitatorAgentName: leadAgent.name,
-        openQuestions: collectedQuestions.length > 0 ? collectedQuestions : undefined,
-        preflightQuestions: preflight.length > 0 ? preflight : undefined,
-        generationDepth,
-        consistencyNotes: consistencyNotes.length > 0 ? consistencyNotes : undefined,
-        projectType,
-        groundedOnExistingCodebase: existingCodebaseFile?.name,
-      };
-
-      setSpec(newSpec);
+      // Final push: identical in shape to every incremental one above, this just guarantees
+      // the very last state (including any consistency-sweep notes) is what's on screen and
+      // what gets saved once generation is complete.
+      pushLiveSpec();
       logDebug(
         "info",
-        `Product specification generated successfully: ${newSpec.title}`,
-        `${newSpec.sections.length} sections, ${draftedSections.filter(s => s.reviewVerdict === "revised").length} revised after review${collectedQuestions.length > 0 ? `, ${collectedQuestions.length} open question(s) for you` : ""}`
+        `Product specification generated successfully: ${parsedMeta.title}`,
+        `${sectionsRef.length} sections, ${sectionsRef.filter(s => s.reviewVerdict === "revised").length} revised after review${questionsRef.length > 0 ? `, ${questionsRef.length} open question(s) for you` : ""}`
       );
     } catch (err: any) {
       if (err?.name === "AbortError" || signal.aborted) {
-        logDebug("info", "Product spec generation aborted by user.");
+        logDebug("info", "Product spec generation aborted by user.", `${sectionsRef.length} section(s) completed before stopping — still shown on screen.`);
       } else {
-        logDebug("error", "Error generating product spec", err?.message || err);
+        logDebug("error", "Error generating product spec", `${err?.message || err}${sectionsRef.length > 0 ? ` — ${sectionsRef.length} section(s) completed before the error are still shown on screen.` : ""}`);
       }
     } finally {
       setIsGenerating(false);
@@ -1587,7 +1654,7 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
 
           {/* Readiness Summary — one glance at whether this is actually ready to hand off,
               without reading every section's badge individually. */}
-          {spec.generationDepth === "thorough" && (() => {
+          {!isGenerating && spec.generationDepth === "thorough" && (() => {
             const total = spec.sections.length;
             const approved = spec.sections.filter(s => s.reviewVerdict === "approved").length;
             const revised = spec.sections.filter(s => s.reviewVerdict === "revised").length;

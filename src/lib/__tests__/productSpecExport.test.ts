@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
 import {
   parseMarkdownLiteBlocks,
@@ -229,6 +230,50 @@ describe("buildProductSpecDocx", () => {
     const buf = new Uint8Array(await blob.arrayBuffer());
     expect(buf[0]).toBe(0x50); // 'P'
     expect(buf[1]).toBe(0x4b); // 'K'
+  });
+
+  // Beyond the zip-signature check above: actually unzips the generated file and inspects
+  // its real internal structure, the way Word itself would need to read it. A signature
+  // check alone would pass on a truncated or corrupted zip; JSZip.loadAsync throws on a
+  // structurally broken one (bad central directory, missing entries, etc.), and checking
+  // the real document.xml content confirms our title/section text actually made it into
+  // the file rather than the exporter having silently produced an empty shell.
+  it("is a well-formed OOXML package with the required parts and real content", async () => {
+    const blob = await buildProductSpecDocx(sampleSpec);
+    const buf = Buffer.from(await blob.arrayBuffer());
+    const zip = await JSZip.loadAsync(buf); // throws on a structurally invalid zip
+
+    // The three parts every valid .docx must have.
+    expect(zip.file("[Content_Types].xml")).not.toBeNull();
+    expect(zip.file("_rels/.rels")).not.toBeNull();
+    const documentXmlFile = zip.file("word/document.xml");
+    expect(documentXmlFile).not.toBeNull();
+
+    const documentXml = await documentXmlFile!.async("string");
+    expect(documentXml.startsWith("<?xml")).toBe(true);
+    expect(documentXml).toContain("<w:document");
+    expect(documentXml).toContain("</w:document>");
+    // Every opening <w:p> paragraph tag must have a matching close — a coarse but real
+    // structural check that content wasn't truncated mid-write.
+    const openParagraphs = (documentXml.match(/<w:p[ >]/g) || []).length;
+    const closeParagraphs = (documentXml.match(/<\/w:p>/g) || []).length;
+    expect(openParagraphs).toBe(closeParagraphs);
+    expect(openParagraphs).toBeGreaterThan(0);
+
+    // The actual generated content — not just structural validity — genuinely made it in.
+    expect(documentXml).toContain(sampleSpec.title);
+    expect(documentXml).toContain(sampleSpec.sections[0].heading);
+  });
+
+  it("renders a spec containing a markdown table as a real OOXML table, not flattened text", async () => {
+    const blob = await buildProductSpecDocx(tableSpec);
+    const buf = Buffer.from(await blob.arrayBuffer());
+    const zip = await JSZip.loadAsync(buf);
+    const documentXml = await zip.file("word/document.xml")!.async("string");
+    expect(documentXml).toContain("<w:tbl>");
+    expect(documentXml).toContain("</w:tbl>");
+    expect(documentXml).toContain("Tier");
+    expect(documentXml).toContain("Free");
   });
 
   it("renders a spec containing a markdown table without throwing", async () => {
