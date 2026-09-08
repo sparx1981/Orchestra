@@ -1,4 +1,5 @@
 import type { CustomAgent, KnowledgeFile } from "@/src/App";
+import { truncateText } from "@/src/lib/textUtils";
 
 export type VibeCodingTool =
   | "google_ai_studio"
@@ -85,23 +86,71 @@ export interface ProductSpecPreflightQuestion {
 
 export type ProductGenerationDepth = "quick" | "thorough";
 
-// Firestore documents cap at ~1MB, and a heavily-revised spec's revisionHistory keeps a
-// full copy of every prior version of every section — these are the same caps
-// saveHistoryEntry (src/App.tsx) applies before writing to Firestore. Defined here, once,
-// so the "would this get trimmed on save?" check shown to the user in the Product tab can
-// never silently drift out of sync with what saveHistoryEntry actually does.
+// Firestore documents cap at ~1MB (1,048,576 bytes). Previously this was enforced as a flat
+// 40,000-character-per-section / 2,000-character-per-revision cap, applied unconditionally —
+// which silently discarded full-fidelity content for even moderately detailed specs nowhere
+// near Firestore's actual limit (a single well-developed section can easily run past 40,000
+// characters on its own well before the *document as a whole* is at any real risk). That
+// meant a spec generated at real length (the kind spanning 100-200+ printed pages once
+// exported) would come back from Chat History missing most of its content on the very
+// documents where completeness matters most.
+//
+// This budget is spent across the whole document instead: nothing gets trimmed at all unless
+// the spec, as a whole, would actually risk exceeding Firestore's real per-document limit.
+// SAFE_HISTORY_DOC_BUDGET_CHARS leaves generous headroom under that ceiling for JSON escaping
+// overhead and every other field on the document (title, metadata, grounded sources, etc.).
+export const SAFE_HISTORY_DOC_BUDGET_CHARS = 850000;
+// Kept for compatibility with any external caller expecting the old flat per-section constant
+// (nothing in this file uses it anymore — see capSpecForHistoryStorage below).
 export const HISTORY_SECTION_CONTENT_CAP = 40000;
-export const HISTORY_REVISION_CONTENT_CAP = 2000;
+// Revisions are already-superseded content, kept for reference/restore — trimmed more readily
+// than live section content once the document is over budget, but generously enough that a
+// reader can still see the substance of what changed.
+export const HISTORY_REVISION_CONTENT_CAP = 8000;
+// However small a section's fair share of the budget works out to, never cut it below this —
+// guarantees no section is ever blanked to near-nothing even in a genuinely enormous spec.
+const MIN_SECTION_CONTENT_FLOOR_CHARS = 20000;
 
-/** True if saving this spec to Chat History would trim anything (see the caps above) —
- *  i.e. the full-fidelity version only exists in the current browser session from here on,
- *  unless the user exports or backs it up some other way. */
+/**
+ * Returns a version of `spec` safe to write to a single Firestore document, trimming as
+ * little as possible: revisions and section content are left completely untouched unless the
+ * document as a whole is actually over budget, in which case section content is trimmed
+ * proportionally (largest sections lose the most) rather than by a flat per-section cutoff.
+ */
+export function capSpecForHistoryStorage(spec: ProductSpec): { spec: ProductSpec; wasTrimmed: boolean } {
+  const fullSize = JSON.stringify(spec).length;
+  if (fullSize <= SAFE_HISTORY_DOC_BUDGET_CHARS) {
+    return { spec, wasTrimmed: false };
+  }
+
+  const sectionsWithCappedRevisions = spec.sections.map(s => ({
+    ...s,
+    revisionHistory: (s.revisionHistory || []).map(r => ({ ...r, content: truncateText(r.content, HISTORY_REVISION_CONTENT_CAP) })),
+  }));
+
+  const overheadSize = JSON.stringify({ ...spec, sections: sectionsWithCappedRevisions.map(s => ({ ...s, content: "" })) }).length;
+  const sectionCount = Math.max(sectionsWithCappedRevisions.length, 1);
+  const contentBudget = Math.max(SAFE_HISTORY_DOC_BUDGET_CHARS - overheadSize, MIN_SECTION_CONTENT_FLOOR_CHARS * sectionCount);
+  const totalContentSize = sectionsWithCappedRevisions.reduce((sum, s) => sum + (s.content?.length || 0), 0);
+  const scale = totalContentSize > 0 ? Math.min(1, contentBudget / totalContentSize) : 1;
+
+  const cappedSections = sectionsWithCappedRevisions.map(s => {
+    const raw = s.content || "";
+    if (scale >= 1) return s; // this section's share of the budget already covers it in full
+    const perSectionCap = Math.max(Math.floor(raw.length * scale), MIN_SECTION_CONTENT_FLOOR_CHARS);
+    return raw.length > perSectionCap ? { ...s, content: truncateText(raw, perSectionCap) } : s;
+  });
+
+  return { spec: { ...spec, sections: cappedSections }, wasTrimmed: true };
+}
+
+/** True if saving this spec to Chat History would trim anything — i.e. the full-fidelity
+ *  version only exists in the current browser session from here on, unless the user
+ *  exports or backs it up some other way. Mirrors capSpecForHistoryStorage's own decision
+ *  exactly (it's the same function), so the warning shown in the Product tab can never
+ *  drift out of sync with what saveHistoryEntry actually stores. */
 export function wouldExceedHistoryStorageLimits(spec: ProductSpec): boolean {
-  return spec.sections.some(
-    s =>
-      (s.content?.length || 0) > HISTORY_SECTION_CONTENT_CAP ||
-      (s.revisionHistory || []).some(r => (r.content?.length || 0) > HISTORY_REVISION_CONTENT_CAP)
-  );
+  return capSpecForHistoryStorage(spec).wasTrimmed;
 }
 
 export interface ProductSpecGroundedSource {

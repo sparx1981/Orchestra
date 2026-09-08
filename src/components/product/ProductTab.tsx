@@ -177,7 +177,7 @@ export function ProductTab({
 
   // Generation depth: "thorough" runs the full draft → cross-review → revise → consistency
   // sweep pipeline; "quick" stops after drafting for a fast first pass.
-  const [generationDepth, setGenerationDepth] = useState<ProductGenerationDepth>("thorough");
+  const [generationDepth, setGenerationDepth] = useState<ProductGenerationDepth>("quick");
 
   // New build vs. update to something already in production — a structural choice that
   // reframes every section's instructions (see runSpecGeneration's projectTypeContext), so

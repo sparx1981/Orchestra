@@ -50,8 +50,6 @@ import {
   SendHorizontal,
   Eraser,
   ArrowRight,
-  ArrowUp,
-  ArrowDown,
   GitCompareArrows,
   Calculator,
   Users,
@@ -154,9 +152,7 @@ const NAV_ITEMS = [
   { id: "custom", label: "Multi Agent Team", icon: Users },
   { id: "product", label: "Product", icon: Sparkles },
   { id: "enquiries", label: "Enquiries", icon: Inbox },
-  { id: "teams", label: "My Teams", icon: Bookmark },
-  { id: "files", label: "My Files", icon: FolderOpen },
-  { id: "history", label: "Chat History", icon: History },
+  { id: "history", label: "History", icon: History },
 ] as const;
 import {
   Tooltip,
@@ -223,7 +219,7 @@ import { applyChangesToRun } from "@/src/lib/gatekeeperMerge";
 import { ProductTab } from "@/src/components/product/ProductTab";
 import { DEFAULT_PRODUCT_AGENTS } from "@/src/lib/productSpecTypes";
 import type { ProductSpec } from "@/src/lib/productSpecTypes";
-import { HISTORY_SECTION_CONTENT_CAP, HISTORY_REVISION_CONTENT_CAP, wouldExceedHistoryStorageLimits } from "@/src/lib/productSpecTypes";
+import { wouldExceedHistoryStorageLimits, capSpecForHistoryStorage, SAFE_HISTORY_DOC_BUDGET_CHARS } from "@/src/lib/productSpecTypes";
 import { isLikelyTextSourceFile, prioritizeCodebasePaths, buildCodebaseDigest, type CodebaseFileEntry } from "@/src/lib/codebaseIngest";
 import { buildProductSpecDocx } from "@/src/lib/productSpecExport";
 import { EnquiryHub } from "@/src/components/briefbridge/EnquiryHub";
@@ -916,6 +912,12 @@ function getAgentColorClass(agentId: string, team: { id: string }[]): string {
 function getAgentSolidBgClass(agentId: string, team: { id: string }[]): string {
   const idx = team.findIndex(a => a.id === agentId);
   return AGENT_SOLID_BG_COLORS[(idx >= 0 ? idx : 0) % AGENT_SOLID_BG_COLORS.length];
+}
+// Human-readable model name for the roster row (e.g. "Claude Sonnet 5") — shown under the
+// agent's name so which model an agent is running is visible without expanding it. Falls
+// back to the raw model id for anything not in MODEL_OPTIONS (a custom/future model id).
+function getAgentModelLabel(agent: CustomAgent): string {
+  return (MODEL_OPTIONS[agent.provider] || []).find(m => m.id === agent.model)?.name || agent.model;
 }
 
 // One agent-identity treatment everywhere a teammate is named — transcript entries,
@@ -2811,30 +2813,36 @@ export default function App() {
   const saveHistoryEntry = useCallback(async (type: UnifiedHistoryEntry["type"], entry: { id: string }) => {
     if (!user) return;
     try {
-      // Long Extended-depth runs accumulate a large transcript; cap each entry's stored
-      // length so a single history document can never approach Firestore's 1MB limit. A
-      // Product Spec has the same risk from a different source: revisionHistory keeps a
-      // full copy of every prior version of a section, which can add up across several
-      // review/revision rounds on 8 sections — cap those (and each section's own content,
-      // generously) the same way, storage-side only; the live in-session UI still shows
-      // full-fidelity content from local state.
+      // Long Extended-depth runs accumulate a large transcript, and a Product Spec's
+      // revisionHistory keeps a full copy of every prior version of every section — either
+      // can, in principle, approach Firestore's 1MB per-document limit. Both are only
+      // trimmed if the entry as actually serialized is over budget (see
+      // SAFE_HISTORY_DOC_BUDGET_CHARS / capSpecForHistoryStorage) rather than by a flat cap
+      // applied unconditionally — a flat per-message or per-section cutoff was previously
+      // discarding full-fidelity content from ordinary, moderately long runs and specs
+      // nowhere near Firestore's actual limit. The live in-session UI always shows
+      // full-fidelity content from local state regardless of what ends up stored here.
       const entryAny = entry as any;
-      const safeEntry = Array.isArray(entryAny.transcript)
-        ? { ...entryAny, transcript: entryAny.transcript.map((t: any) => ({ ...t, message: truncateText(t.message, 4000) })) }
-        : Array.isArray(entryAny.sections)
-        ? {
-            ...entryAny,
-            sections: entryAny.sections.map((s: any) => ({
-              ...s,
-              content: truncateText(s.content, HISTORY_SECTION_CONTENT_CAP),
-              revisionHistory: Array.isArray(s.revisionHistory)
-                ? s.revisionHistory.map((r: any) => ({ ...r, content: truncateText(r.content, HISTORY_REVISION_CONTENT_CAP) }))
-                : s.revisionHistory,
-            })),
-          }
-        : entryAny;
+      const fullSize = JSON.stringify(entryAny).length;
+      const safeEntry =
+        fullSize <= SAFE_HISTORY_DOC_BUDGET_CHARS
+          ? entryAny
+          : Array.isArray(entryAny.transcript)
+          ? { ...entryAny, transcript: entryAny.transcript.map((t: any) => ({ ...t, message: truncateText(t.message, 4000) })) }
+          : Array.isArray(entryAny.sections)
+          ? capSpecForHistoryStorage(entryAny as ProductSpec).spec
+          : entryAny;
       const ref = doc(db, "users", user.uid, "history", entry.id);
-      await setDoc(ref, { ...cleanUndefined(safeEntry), type, savedAt: serverTimestamp() });
+      // The Firestore query that reads this collection back (see historyRef below) orders
+      // by `timestamp` — a query with `orderBy` silently excludes any document missing that
+      // field entirely, rather than treating it as e.g. null/oldest. ProductSpec carries its
+      // own date under `createdAt`, not `timestamp`, so without this normalization every
+      // "product" entry saved here would be written successfully but then never appear in
+      // History at all (previously the exact bug: Product specs never showed up). Every
+      // entry type gets a real top-level `timestamp` here regardless of what its own object
+      // calls its date field, so a future entry type can't silently reintroduce the same gap.
+      const normalizedTimestamp = entryAny.timestamp || entryAny.createdAt || new Date().toISOString();
+      await setDoc(ref, { ...cleanUndefined(safeEntry), type, timestamp: normalizedTimestamp, savedAt: serverTimestamp() });
     } catch (error: any) {
       console.error("Error saving history entry:", error);
       logDebug("error", "Failed to save conversation to Chat History", error?.message || error);
@@ -3773,14 +3781,16 @@ export default function App() {
     }
   };
 
-  const moveAgentPosition = (index: number, direction: "up" | "down") => {
+  // Marks an agent as lead: moves it to the top of the roster in one step (the same end
+  // result as repeatedly using "move up" until it reaches position 0). Position 0 is what
+  // determines "lead" throughout the UI — there's no separate flag to keep in sync.
+  const promoteAgentToLead = (index: number) => {
+    if (index <= 0) return;
     const isProd = activeTab === "product";
     const currentList = isProd ? productTeam : customTeam;
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= currentList.length) return;
     const updated = [...currentList];
     const [moved] = updated.splice(index, 1);
-    updated.splice(targetIndex, 0, moved);
+    updated.unshift(moved);
     if (isProd) {
       setProductTeam(updated);
       saveProductTeamToCloud(updated);
@@ -3793,7 +3803,7 @@ export default function App() {
   const resetToDefaultProductTeam = () => {
     setProductTeam(DEFAULT_PRODUCT_AGENTS);
     saveProductTeamToCloud(DEFAULT_PRODUCT_AGENTS);
-    logDebug("info", "Product Specification Team reset to default specialists");
+    logDebug("info", "Product Team reset to default specialists");
   };
 
   // Firestore documents are capped at ~1MB; base64-encoded images inflate by ~33%, so cap
@@ -9241,6 +9251,14 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                           <LayoutGrid className="mr-2 h-4 w-4" />
                           <span>Comparison</span>
                         </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setActiveTab("teams")} className="cursor-pointer">
+                          <Bookmark className="mr-2 h-4 w-4" />
+                          <span>My Teams</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setActiveTab("files")} className="cursor-pointer">
+                          <FolderOpen className="mr-2 h-4 w-4" />
+                          <span>My Files</span>
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={startTour} className="cursor-pointer">
                           <Sparkles className="mr-2 h-4 w-4" />
                           <span>Show Me Around</span>
@@ -9787,11 +9805,6 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                                 {currentKnowledgeFiles.length}
                               </Badge>
                             </CardTitle>
-                            {isProductTab && (
-                              <CardDescription className="text-xs">
-                                Ground specifications in PRDs, schemas, API docs & user stories.
-                              </CardDescription>
-                            )}
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0">
                             <DropdownMenu>
@@ -10217,15 +10230,13 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                             <div className="space-y-1">
                               <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-800 dark:text-slate-100">
                                 <Users className="w-4 h-4 text-blue-500" />
-                                {isProductTab ? "Product Specification Team" : "Team Agents"}
+                                {isProductTab ? "Product Team" : "Team Agents"}
                                 <Badge variant="outline" className="text-xs font-mono font-bold">
                                   {currentTeam.length}
                                 </Badge>
                               </CardTitle>
                               <CardDescription className="text-xs">
-                                {isProductTab
-                                  ? "Top agent (#1) is the Lead Architect who drives the vision & orchestrates domain specialists."
-                                  : "Deploy as many agents as your objectives require."}
+                                Deploy as many agents as your objectives require.
                               </CardDescription>
                             </div>
                             <CollapsibleTrigger render={
@@ -10366,7 +10377,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                               className="w-full flex items-center justify-between gap-2 p-4"
                             >
                               <span className="text-xs font-medium text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
-                                <Sparkles className="w-3.5 h-3.5" /> {isProductTab ? "Suggest Product Spec Team" : "Suggest a Team"}
+                                <Sparkles className="w-3.5 h-3.5" /> Suggest a team
                               </span>
                               {isSuggestTeamOpen ? <ChevronUp className="w-3.5 h-3.5 text-blue-500" /> : <ChevronDown className="w-3.5 h-3.5 text-blue-500" />}
                             </button>
@@ -10445,7 +10456,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                                       ) : (
                                         <Sparkles className="w-3.5 h-3.5" />
                                       )}
-                                      {isProductTab ? "Suggest Product Specialists" : "Suggest Agent Setup"}
+                                      Suggest Agent Setup
                                     </Button>
                                     <p className="text-xs text-slate-500 leading-relaxed">
                                       {isProductTab
@@ -10579,44 +10590,36 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                                         </span>
                                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                           <span className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate">{agent.name || "Unnamed agent"}</span>
-                                          {isProductTab && index === 0 ? (
+                                          {index === 0 && (
                                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex-shrink-0">
                                               ★ Lead
                                             </span>
-                                          ) : (
-                                            <span className="px-1 py-0.5 rounded text-[10px] font-medium bg-slate-200/70 text-slate-600 dark:bg-slate-800 dark:text-slate-400 flex-shrink-0">
-                                              #{index + 1}
-                                            </span>
                                           )}
+                                          <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 truncate">
+                                            {getAgentModelLabel(agent)}
+                                          </span>
                                         </div>
                                         {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500 flex-shrink-0 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500 flex-shrink-0 ml-auto" />}
                                       </button>
                                       
-                                      {/* Up/down reordering controls */}
-                                      <div className="flex items-center gap-0.5 flex-shrink-0">
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          disabled={index === 0}
-                                          onClick={(e) => { e.stopPropagation(); moveAgentPosition(index, "up"); }}
-                                          title="Move up (promote position)"
-                                          aria-label={`Move ${agent.name} up`}
-                                          className="w-6 h-6 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-20"
-                                        >
-                                          <ArrowUp className="w-3 h-3" />
-                                        </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          disabled={index === currentTeam.length - 1}
-                                          onClick={(e) => { e.stopPropagation(); moveAgentPosition(index, "down"); }}
-                                          title="Move down"
-                                          aria-label={`Move ${agent.name} down`}
-                                          className="w-6 h-6 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-20"
-                                        >
-                                          <ArrowDown className="w-3 h-3" />
-                                        </Button>
-                                      </div>
+                                      {/* Mark as lead: moves this agent to the top of the roster in one
+                                          step (equivalent to using "move up" repeatedly). Replaces the
+                                          old separate up/down reordering buttons. */}
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        disabled={index === 0}
+                                        onClick={(e) => { e.stopPropagation(); promoteAgentToLead(index); }}
+                                        title={index === 0 ? "Current lead" : `Mark ${agent.name} as lead`}
+                                        aria-label={index === 0 ? `${agent.name} is the current lead` : `Mark ${agent.name} as lead`}
+                                        className={`w-6 h-6 rounded flex-shrink-0 ${
+                                          index === 0
+                                            ? "text-amber-500 disabled:opacity-100"
+                                            : "text-slate-400 hover:text-amber-500 dark:hover:text-amber-400"
+                                        }`}
+                                      >
+                                        <Star className="w-3.5 h-3.5" fill={index === 0 ? "currentColor" : "none"} />
+                                      </Button>
 
                                       <Button
                                         variant="ghost"
@@ -13241,16 +13244,16 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                 /* Enquiries Tab (BriefBridge) */
                 user && <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} />
               ) : (
-                /* Chat History Tab */
+                /* History Tab */
                 <div className="space-y-6 animate-in fade-in duration-300">
                   <div className="flex items-center justify-between gap-4">
                     <div className="space-y-1">
                       <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
                         <History className="w-5 h-5 text-blue-500" />
-                        Chat History
+                        History
                       </h1>
                       <p className="text-sm text-slate-500 dark:text-slate-400">
-                        Every conversation from Agent Comparison Playground and Multi Agent Team, newest first. Click one to reopen and continue it.
+                        Every conversation from Multi Agent Team and Agent Comparison Playground, and every specification from Product, newest first. Click one to reopen and continue it.
                       </p>
                     </div>
                     {unifiedHistory.length > 0 && (
