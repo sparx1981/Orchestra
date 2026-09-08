@@ -101,7 +101,9 @@ import {
   CornerDownRight,
   Settings2,
   PenLine,
-  Atom,} from "lucide-react";
+  Atom,
+  Inbox,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -151,6 +153,7 @@ function OrchestraWordmark({ compact = false }: { compact?: boolean }) {
 const NAV_ITEMS = [
   { id: "custom", label: "Multi Agent Team", icon: Users },
   { id: "product", label: "Product", icon: Sparkles },
+  { id: "enquiries", label: "Enquiries", icon: Inbox },
   { id: "teams", label: "My Teams", icon: Bookmark },
   { id: "files", label: "My Files", icon: FolderOpen },
   { id: "history", label: "Chat History", icon: History },
@@ -223,6 +226,8 @@ import type { ProductSpec } from "@/src/lib/productSpecTypes";
 import { HISTORY_SECTION_CONTENT_CAP, HISTORY_REVISION_CONTENT_CAP, wouldExceedHistoryStorageLimits } from "@/src/lib/productSpecTypes";
 import { isLikelyTextSourceFile, prioritizeCodebasePaths, buildCodebaseDigest, type CodebaseFileEntry } from "@/src/lib/codebaseIngest";
 import { buildProductSpecDocx } from "@/src/lib/productSpecExport";
+import { EnquiryHub } from "@/src/components/briefbridge/EnquiryHub";
+import { PublicIntakePortal } from "@/src/components/briefbridge/PublicIntakePortal";
 
 // Caps how many agent calls within a single round are actually in flight at once. Firing
 // every panelist's call simultaneously (the previous behaviour) means a 6-agent team sends
@@ -1527,6 +1532,16 @@ export default function App() {
   const [sharedRunToken] = useState(() => new URLSearchParams(window.location.search).get("shared"));
   if (sharedRunToken) return <SharedRunView token={sharedRunToken} />;
 
+  // BriefBridge public intake portal: /intake/:token, a path (not query param, unlike
+  // ?shared= above) since it's the link a developer hands to a client — worth looking
+  // like a real page. Same early-return shape as sharedRunToken: read once at mount,
+  // no admin chrome, no auth wall.
+  const [intakeToken] = useState(() => {
+    const match = window.location.pathname.match(/^\/intake\/([^/]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  });
+  if (intakeToken) return <PublicIntakePortal token={intakeToken} />;
+
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
@@ -1648,6 +1663,14 @@ export default function App() {
   // Optional, separate from the free-text task: constraints the team must respect and what a
   // good outcome looks like, so a pivot can be checked against them explicitly rather than
   // everything living undifferentiated in one textarea.
+  // Pipe-to-Prompt bridge (BriefBridge): the Enquiry Hub compiles a client brief into
+  // Markdown and hands it here; reusing the existing productPrompt/setActiveTab state
+  // (rather than new props on ProductTab) means the Product tab picks it up exactly
+  // like a prompt the person typed themselves.
+  const handlePipeEnquiryToPrompt = useCallback((prompt: string) => {
+    setProductPrompt(prompt);
+    setActiveTab("product");
+  }, [setProductPrompt]);
   const [taskConstraints, setTaskConstraints] = useState("");
   const [taskSuccessCriteria, setTaskSuccessCriteria] = useState("");
   const [isBriefDetailsOpen, setIsBriefDetailsOpen] = useState(false);
@@ -13214,6 +13237,9 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                     </div>
                   )}
                 </div>
+              ) : activeTab === "enquiries" ? (
+                /* Enquiries Tab (BriefBridge) */
+                user && <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} />
               ) : (
                 /* Chat History Tab */
                 <div className="space-y-6 animate-in fade-in duration-300">

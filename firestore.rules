@@ -103,6 +103,48 @@ service cloud.firestore {
       allow read, write: if isOwner(userId);
     }
 
+    // ===============================================================
+    // BriefBridge: client intake and prompt-synthesis module.
+    // ===============================================================
+
+    // Private, full intake form configuration (includes notificationEmails —
+    // never exposed publicly). Owner only.
+    match /users/{userId}/briefbridge/config {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Public-safe mirror of the config, keyed by the same token used in the
+    // /intake/:token URL. Publicly readable by design (that's the point — an
+    // unauthenticated client needs to load the form), but only the owning
+    // developer can create or update it, and only for their own uid. No
+    // notificationEmails field is ever written here (see briefBridgeService.ts).
+    match /intakeTokens/{token} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Client submissions. Reading, updating (status/notes), and deleting is
+    // strictly owner-only. Creation is the one deliberately public path in this
+    // whole file: an unauthenticated visitor on /intake/:token needs to be able
+    // to write their own brief — but only into a form that's actually published
+    // and actually theirs, so the create rule re-verifies both against the
+    // public /intakeTokens/{token} document rather than trusting the payload.
+    match /users/{userId}/enquiries/{enquiryId} {
+      allow read, update, delete: if isOwner(userId);
+      allow create: if request.resource.data.userId == userId
+        && request.resource.data.token is string
+        && exists(/databases/$(database)/documents/intakeTokens/$(request.resource.data.token))
+        && get(/databases/$(database)/documents/intakeTokens/$(request.resource.data.token)).data.userId == userId
+        && get(/databases/$(database)/documents/intakeTokens/$(request.resource.data.token)).data.isPublished == true
+        && request.resource.data.clientName is string && request.resource.data.clientName.size() > 0 && request.resource.data.clientName.size() < 200
+        && request.resource.data.clientEmail is string && request.resource.data.clientEmail.size() < 200
+        && request.resource.data.projectTitle is string && request.resource.data.projectTitle.size() < 200
+        && request.resource.data.projectDescription is string && request.resource.data.projectDescription.size() < 6000
+        && request.resource.data.status == "new";
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;

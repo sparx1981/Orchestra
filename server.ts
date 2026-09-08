@@ -63,6 +63,33 @@ const DEFAULT_MAX_TOKENS_STREAMING = 16000;
 
 type ImagePart = { mimeType: string; data: string }; // data = raw base64, no data: prefix
 
+// ---------------------------------------------------------------------------
+// BriefBridge: optional, lazy Firebase Admin lookup for a single field
+// (notificationEmails) on one private config doc. Everything else in this app
+// reads/writes Firestore from the browser via the client SDK — this is the one
+// exception, gated entirely behind whether initialization succeeds, so an
+// environment with no Application Default Credentials configured (e.g. local
+// dev) behaves exactly as if this function didn't exist.
+// ---------------------------------------------------------------------------
+let briefBridgeAdminDb: import("firebase-admin/firestore").Firestore | null | undefined;
+
+async function getBriefBridgeFormRecipients(userId: string): Promise<string[]> {
+  if (briefBridgeAdminDb === undefined) {
+    try {
+      const { initializeApp, getApps } = await import("firebase-admin/app");
+      const { getFirestore } = await import("firebase-admin/firestore");
+      if (!getApps().length) initializeApp();
+      briefBridgeAdminDb = getFirestore();
+    } catch {
+      briefBridgeAdminDb = null; // no ADC available — every future call short-circuits below
+    }
+  }
+  if (!briefBridgeAdminDb) return [];
+  const snap = await briefBridgeAdminDb.collection("users").doc(userId).collection("briefbridge").doc("config").get();
+  const emails = snap.exists ? snap.data()?.notificationEmails : null;
+  return Array.isArray(emails) ? emails.filter((e): e is string => typeof e === "string" && !!e) : [];
+}
+
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3000");
@@ -549,6 +576,101 @@ async function startServer() {
       res.json({ image: null });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // BriefBridge: transactional "new lead" email notification.
+  //
+  // Enquiry writes themselves go straight from the public intake portal to
+  // Firestore via the client SDK (see src/lib/briefBridgeService.ts +
+  // firestore.rules) — consistent with how the rest of Orchestra reads and writes
+  // its data. This is the one piece that can't live client-side: dispatching mail
+  // through Resend needs RESEND_API_KEY, which must never reach the browser.
+  //
+  // Deliberately best-effort and fire-and-forget from the caller's side: a failed
+  // or skipped (no key configured) notification never blocks or fails the
+  // client's already-completed Firestore write. A tiny in-memory sliding-window
+  // limiter guards against a scripted flood of intake submissions driving up
+  // email volume; it resets on redeploy, which is an acceptable trade-off for a
+  // low-volume public form (not a substitute for the Firestore rules that
+  // actually gate who can write an enquiry in the first place).
+  // ---------------------------------------------------------------------------
+  const notifyRateWindows = new Map<string, number[]>();
+  const NOTIFY_WINDOW_MS = 60 * 60 * 1000;
+  const NOTIFY_MAX_PER_WINDOW = 20;
+
+  function isNotifyRateLimited(ip: string): boolean {
+    const now = Date.now();
+    const windowStart = now - NOTIFY_WINDOW_MS;
+    const hits = (notifyRateWindows.get(ip) || []).filter(t => t > windowStart);
+    hits.push(now);
+    notifyRateWindows.set(ip, hits);
+    return hits.length > NOTIFY_MAX_PER_WINDOW;
+  }
+
+  app.post("/api/briefbridge/notify", async (req, res) => {
+    // Always 202 — this is a best-effort side-channel, not a step in the
+    // client's submission flow, so it never surfaces a failure state to a
+    // real client filling in the public form.
+    res.status(202).json({ accepted: true });
+
+    try {
+      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+      if (isNotifyRateLimited(ip)) return;
+
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) return;
+
+      const { enquiryId, clientName, clientEmail, projectTitle, budgetTier, projectDescription } = req.body || {};
+      if (!clientName || !projectTitle) return;
+
+      const { ownerUserId } = req.body || {};
+      const recipients = new Set(
+        (process.env.BRIEFBRIDGE_NOTIFICATION_EMAILS || "").split(",").map(s => s.trim()).filter(Boolean)
+      );
+      // Per-form recipients (Form Settings → "Notify these emails") live in the private
+      // config doc, which the public visitor's browser never has access to — reading it
+      // needs a privileged, server-side lookup. Firebase Admin is initialized lazily and
+      // only attempted here (Cloud Run provides Application Default Credentials for free;
+      // local dev without them just falls through to BRIEFBRIDGE_NOTIFICATION_EMAILS above,
+      // same as if this lookup were never added).
+      if (ownerUserId) {
+        try {
+          const formRecipients = await getBriefBridgeFormRecipients(ownerUserId);
+          formRecipients.forEach(r => recipients.add(r));
+        } catch (err: any) {
+          console.warn("[BriefBridge] Per-form recipient lookup unavailable, using fallback list:", err?.message || err);
+        }
+      }
+      if (recipients.size === 0) return;
+
+      const appUrl = process.env.APP_URL || "";
+      const escapeHtml = (s: string) => String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: "BriefBridge Alerts <briefs@orchestra.dev>",
+          to: Array.from(recipients),
+          subject: `[New Lead] ${projectTitle} — ${clientName}`,
+          html: `
+            <div style="font-family: sans-serif; padding: 20px; background-color: #09090b; color: #f4f4f5; border-radius: 8px;">
+              <h2 style="color: #3b82f6; margin-top: 0;">New Brief Received</h2>
+              <p><strong>Client:</strong> ${escapeHtml(clientName)} (${escapeHtml(clientEmail)})</p>
+              <p><strong>Budget Tier:</strong> ${escapeHtml(budgetTier || "undisclosed")}</p>
+              <p><strong>Project Overview:</strong></p>
+              <blockquote style="background: #18181b; border-left: 4px solid #3b82f6; padding: 12px; margin: 8px 0;">
+                ${escapeHtml(String(projectDescription || "").slice(0, 600))}
+              </blockquote>
+              ${appUrl ? `<p><a href="${appUrl}#enquiries" style="color: #60a5fa;">View in Enquiry Hub &rarr;</a></p>` : ""}
+            </div>
+          `,
+        }),
+      }).catch(err => console.error("[BriefBridge] Resend dispatch failed:", err?.message || err));
+    } catch (err: any) {
+      console.error("[BriefBridge] Notify handler error:", err?.message || err);
     }
   });
 

@@ -56,12 +56,82 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["updatedAt"]
+    },
+    "intakeFormConfig": {
+      "title": "Intake Form Config",
+      "description": "BriefBridge: a developer's public client intake form (branding, custom questions, notification recipients)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "token": { "type": "string", "description": "Doc id of the public mirror at /intakeTokens/{token}; also the /intake/:token URL segment" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "companyName": { "type": "string" },
+        "accentColor": { "type": "string" },
+        "customQuestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "description": { "type": "string" },
+              "type": { "type": "string", "enum": ["text", "textarea", "select", "multi_select", "boolean"] },
+              "required": { "type": "boolean" },
+              "options": { "type": "array", "items": { "type": "string" } },
+              "placeholder": { "type": "string" }
+            }
+          }
+        },
+        "notificationEmails": { "type": "array", "items": { "type": "string" }, "description": "Never exposed on the public /intakeTokens mirror" },
+        "isPublished": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "token", "title", "isPublished", "updatedAt"]
+    },
+    "enquiry": {
+      "title": "Enquiry",
+      "description": "BriefBridge: one client submission from a published intake form",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "token": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientEmail": { "type": "string" },
+        "clientCompany": { "type": "string" },
+        "targetLaunch": { "type": "string", "enum": ["immediate", "within_month", "one_to_three_months", "flexible"] },
+        "budgetTier": { "type": "string", "enum": ["sub_5k", "5k_15k", "15k_50k", "50k_plus", "undisclosed"] },
+        "projectTitle": { "type": "string" },
+        "projectDescription": { "type": "string" },
+        "techPreferences": { "type": "array", "items": { "type": "string" } },
+        "assetLinks": { "type": "array", "items": { "type": "string" } },
+        "customAnswers": { "type": "object", "description": "Keyed by CustomQuestion id" },
+        "status": { "type": "string", "enum": ["new", "triaged", "converted", "archived"] },
+        "internalNotes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "token", "clientName", "clientEmail", "projectTitle", "projectDescription", "status", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}/settings/private": {
       "schema": "userSettings",
       "description": "Private settings for a specific user"
+    },
+    "/users/{userId}/briefbridge/config": {
+      "schema": "intakeFormConfig",
+      "description": "BriefBridge: private, full intake form configuration for this developer"
+    },
+    "/intakeTokens/{token}": {
+      "schema": "intakeFormConfig",
+      "description": "BriefBridge: public-safe mirror of intakeFormConfig (omits notificationEmails/userId-sensitive fields), readable without authentication"
+    },
+    "/users/{userId}/enquiries/{enquiryId}": {
+      "schema": "enquiry",
+      "description": "BriefBridge: client submissions for this developer's intake form(s)"
     }
   }
 }
