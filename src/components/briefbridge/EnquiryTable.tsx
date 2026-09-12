@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowRight } from "lucide-react";
 import type { Enquiry, EnquiryStatus } from "@/src/types/briefBridge";
-import { BUDGET_TIER_LABELS, ENQUIRY_STATUS_LABELS, TARGET_LAUNCH_LABELS } from "@/src/types/briefBridge";
+import { BUDGET_TIER_LABELS, ENQUIRY_STATUS_LABELS, TARGET_LAUNCH_LABELS, enquiryClientFullName } from "@/src/types/briefBridge";
 
 const STATUS_BADGE_VARIANT: Record<EnquiryStatus, "default" | "secondary" | "outline" | "destructive"> = {
   new: "default",
@@ -63,10 +63,10 @@ export function EnquiryTable({
               key={enquiry.id}
               className="grid grid-cols-[32px_1.4fr_1fr_0.9fr_0.9fr_1fr_0.7fr_32px] gap-3 px-4 py-3 items-center text-sm hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors"
             >
-              <Checkbox checked={selectedIds.has(enquiry.id)} onCheckedChange={() => onToggleSelect(enquiry.id)} aria-label={`Select ${enquiry.clientName}`} />
+              <Checkbox checked={selectedIds.has(enquiry.id)} onCheckedChange={() => onToggleSelect(enquiry.id)} aria-label={`Select ${enquiryClientFullName(enquiry)}`} />
               <button onClick={() => onOpenDetail(enquiry)} className="text-left min-w-0 group">
                 <div className="font-medium text-slate-800 dark:text-slate-100 truncate group-hover:underline">{enquiry.projectTitle || "Untitled project"}</div>
-                <div className="text-xs text-slate-400 truncate">{enquiry.clientName} · {enquiry.clientEmail}</div>
+                <div className="text-xs text-slate-400 truncate">{enquiryClientFullName(enquiry)} · {enquiry.clientEmail}</div>
               </button>
               <span className="truncate text-slate-500 dark:text-slate-400">{enquiry.clientCompany || "—"}</span>
               <span className="text-xs text-slate-500 dark:text-slate-400">{BUDGET_TIER_LABELS[enquiry.budgetTier]}</span>

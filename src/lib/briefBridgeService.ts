@@ -157,7 +157,7 @@ export async function deleteEnquiry(userId: string, enquiryId: string): Promise<
 
 export function enquiriesToCsv(enquiries: Enquiry[]): string {
   const headers = [
-    "id", "clientName", "clientEmail", "clientCompany", "projectTitle", "budgetTier",
+    "id", "clientFirstName", "clientSurname", "clientEmail", "clientCompany", "projectTitle", "budgetTier",
     "targetLaunch", "status", "createdAt",
   ];
   const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;

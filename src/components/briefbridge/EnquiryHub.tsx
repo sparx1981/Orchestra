@@ -17,7 +17,7 @@ import { EnquiryExportModal } from "@/src/components/briefbridge/EnquiryExportMo
 import { deleteEnquiry, saveIntakeConfig, subscribeEnquiries, subscribeIntakeConfig, updateEnquiryStatus } from "@/src/lib/briefBridgeService";
 import { defaultIntakeFormConfig } from "@/src/types/briefBridge";
 import type { Enquiry, EnquiryStatus, IntakeFormConfig } from "@/src/types/briefBridge";
-import { ENQUIRY_STATUS_LABELS } from "@/src/types/briefBridge";
+import { ENQUIRY_STATUS_LABELS, enquiryClientFullName } from "@/src/types/briefBridge";
 import type { CustomAgent } from "@/src/App";
 
 function generateToken(): string {
@@ -62,7 +62,7 @@ export function EnquiryHub({ userId, onPipeToPrompt, productTeam, callAgent }: E
       if (statusFilter !== "all" && e.status !== statusFilter) return false;
       if (search.trim()) {
         const q = search.trim().toLowerCase();
-        const haystack = `${e.clientName} ${e.clientEmail} ${e.clientCompany || ""} ${e.projectTitle}`.toLowerCase();
+        const haystack = `${enquiryClientFullName(e)} ${e.clientEmail} ${e.clientCompany || ""} ${e.projectTitle}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;

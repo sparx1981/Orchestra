@@ -26,7 +26,8 @@ export function PublicIntakePortal({ token }: { token: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [clientName, setClientName] = useState("");
+  const [clientFirstName, setClientFirstName] = useState("");
+  const [clientSurname, setClientSurname] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [clientCompany, setClientCompany] = useState("");
   const [projectTitle, setProjectTitle] = useState("");
@@ -51,14 +52,14 @@ export function PublicIntakePortal({ token }: { token: string }) {
 
   const missingRequired = useMemo(() => {
     if (!form) return true;
-    if (!clientName.trim() || !clientEmail.trim() || !projectTitle.trim() || !projectDescription.trim()) return true;
+    if (!clientFirstName.trim() || !clientEmail.trim() || !projectTitle.trim() || !projectDescription.trim()) return true;
     for (const q of form.customQuestions) {
       if (!q.required) continue;
       const val = customAnswers[q.id];
       if (val === undefined || val === "" || (Array.isArray(val) && val.length === 0)) return true;
     }
     return false;
-  }, [form, clientName, clientEmail, projectTitle, projectDescription, customAnswers]);
+  }, [form, clientFirstName, clientEmail, projectTitle, projectDescription, customAnswers]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -67,7 +68,8 @@ export function PublicIntakePortal({ token }: { token: string }) {
     setError(null);
     try {
       await submitPublicIntake(token, (form as any).userId, {
-        clientName: clientName.trim(),
+        clientFirstName: clientFirstName.trim(),
+        clientSurname: clientSurname.trim(),
         clientEmail: clientEmail.trim().toLowerCase(),
         clientCompany: clientCompany.trim() || undefined,
         projectTitle: projectTitle.trim(),
@@ -113,7 +115,7 @@ export function PublicIntakePortal({ token }: { token: string }) {
           <CheckCircle2 className="w-12 h-12 mx-auto" style={{ color: accent }} />
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Brief received</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Thanks{clientName ? `, ${clientName}` : ""} — {form.companyName || "we"} will be in touch shortly.
+            Thanks{clientFirstName ? `, ${clientFirstName}` : ""} — {form.companyName || "we"} will be in touch shortly.
           </p>
         </div>
       </div>
@@ -142,13 +144,18 @@ export function PublicIntakePortal({ token }: { token: string }) {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label htmlFor="clientName">Your name *</Label>
-              <Input id="clientName" required value={clientName} onChange={e => setClientName(e.target.value)} maxLength={200} />
+              <Label htmlFor="clientFirstName">First name *</Label>
+              <Input id="clientFirstName" required value={clientFirstName} onChange={e => setClientFirstName(e.target.value)} maxLength={200} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="clientEmail">Email *</Label>
-              <Input id="clientEmail" type="email" required value={clientEmail} onChange={e => setClientEmail(e.target.value)} maxLength={200} />
+              <Label htmlFor="clientSurname">Surname</Label>
+              <Input id="clientSurname" value={clientSurname} onChange={e => setClientSurname(e.target.value)} maxLength={200} />
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="clientEmail">Email *</Label>
+            <Input id="clientEmail" type="email" required value={clientEmail} onChange={e => setClientEmail(e.target.value)} maxLength={200} />
           </div>
 
           <div className="space-y-1.5">

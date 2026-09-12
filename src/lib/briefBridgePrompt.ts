@@ -7,7 +7,7 @@
 // review and hand off to a client relationship.
 
 import type { CustomQuestion, Enquiry, IntakeFormConfig, PipeToPromptOptions } from "@/src/types/briefBridge";
-import { BUDGET_TIER_LABELS, TARGET_LAUNCH_LABELS } from "@/src/types/briefBridge";
+import { BUDGET_TIER_LABELS, TARGET_LAUNCH_LABELS, enquiryClientFullName } from "@/src/types/briefBridge";
 
 const TOOL_LABELS: Record<PipeToPromptOptions["tool"], string> = {
   cursor: "Cursor",
@@ -70,7 +70,7 @@ export function compileEnquiryToPrompt(
   lines.push(`_Compiled from a BriefBridge client intake for ${TOOL_LABELS[options.tool]}._`, "");
 
   lines.push("## 1. Client & Context");
-  lines.push(`- **Client:** ${sanitizeClientText(enquiry.clientName, 200)}`);
+  lines.push(`- **Client:** ${sanitizeClientText(enquiryClientFullName(enquiry), 200)}`);
   if (enquiry.clientCompany) lines.push(`- **Company:** ${sanitizeClientText(enquiry.clientCompany, 200)}`);
   lines.push(`- **Contact:** ${sanitizeClientText(enquiry.clientEmail, 200)}`);
   if (options.includeBudgetTimeline) {

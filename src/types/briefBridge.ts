@@ -57,7 +57,11 @@ export interface Enquiry {
   id: string;
   userId: string;
   token: string;
-  clientName: string;
+  clientFirstName: string;
+  clientSurname: string;
+  /** @deprecated Enquiries submitted before the name field was split into first/surname
+   *  only have this combined field. Read via enquiryClientFullName, never directly. */
+  clientName?: string;
   clientEmail: string;
   clientCompany?: string;
   targetLaunch: TargetLaunchTimeframe;
@@ -75,7 +79,8 @@ export interface Enquiry {
 
 /** Shape submitted by the public form — narrower than Enquiry (no id/userId/status/etc). */
 export interface PublicIntakeSubmission {
-  clientName: string;
+  clientFirstName: string;
+  clientSurname: string;
   clientEmail: string;
   clientCompany?: string;
   targetLaunch: TargetLaunchTimeframe;
@@ -87,6 +92,14 @@ export interface PublicIntakeSubmission {
   customAnswers: Record<string, CustomFieldResponse>;
   /** Honeypot field. Real clients never see or fill this; bots often do. */
   _gotcha?: string;
+}
+
+/** The client's display name — prefers the split first/surname fields, falling back to the
+ *  legacy combined `clientName` for enquiries submitted before the split. Use this instead
+ *  of reading clientFirstName/clientSurname/clientName directly anywhere they're displayed. */
+export function enquiryClientFullName(e: Pick<Enquiry, "clientFirstName" | "clientSurname" | "clientName">): string {
+  const joined = [e.clientFirstName?.trim(), e.clientSurname?.trim()].filter(Boolean).join(" ");
+  return joined || e.clientName?.trim() || "";
 }
 
 export type PipeToPromptTool = "cursor" | "lovable" | "claude_code" | "v0" | "generic";
@@ -128,6 +141,75 @@ export const ENQUIRY_STATUS_LABELS: Record<EnquiryStatus, string> = {
   archived: "Archived",
 };
 
+// Seeded onto every brand-new intake form (see EnquiryHub's ensureConfig — this never
+// touches a form a developer has already configured, only a form that's never had a config
+// doc at all). Covers only what the fixed fields above (name, email, company, project
+// title/description) don't already ask — no duplicate questions for those. There's no
+// question type for a file upload (see CustomQuestionType), so "brand guidelines" asks for
+// a text/link description rather than an actual upload.
+export const DEFAULT_INTAKE_QUESTIONS: CustomQuestion[] = [
+  { id: "feature_1", label: "Key feature requirement 1", type: "text", required: false },
+  { id: "feature_2", label: "Key feature requirement 2", type: "text", required: false },
+  { id: "feature_3", label: "Key feature requirement 3", type: "text", required: false },
+  { id: "feature_4", label: "Key feature requirement 4", type: "text", required: false },
+  { id: "feature_5", label: "Key feature requirement 5", type: "text", required: false },
+  {
+    id: "primary_user",
+    label: "Who is the primary user?",
+    description: "e.g., internal team, direct consumers, B2B clients.",
+    type: "text",
+    required: false,
+  },
+  {
+    id: "core_problem",
+    label: "What single problem does this solve right now?",
+    type: "textarea",
+    required: false,
+  },
+  {
+    id: "roles_permissions",
+    label: "What types of roles/permissions are needed?",
+    description: "e.g., Simple single-user, multi-tenant with admin/member tiers, or public/no login needed.",
+    type: "text",
+    required: false,
+  },
+  {
+    id: "day_one_mvp",
+    label: "If the app could only do one thing well on day one, what is it?",
+    description: "Identifies the true MVP feature vs. nice-to-haves.",
+    type: "textarea",
+    required: false,
+  },
+  {
+    id: "aesthetic_adjectives",
+    label: "Describe the desired aesthetic in 3–4 adjectives",
+    description: `e.g., "Dark-mode, sleek, technical, minimal" vs. "Playful, pastel, rounded, friendly".`,
+    type: "text",
+    required: false,
+  },
+  {
+    id: "brand_guidelines",
+    label: "Are there specific brand guidelines to follow?",
+    description: "e.g., specific color codes, an existing design system, or a link to your logo/brand assets.",
+    type: "textarea",
+    required: false,
+  },
+  {
+    id: "competitors_inspiration",
+    label: "Competitors or inspiration apps",
+    description: "URLs of products where you like the layout, micro-interactions, or information hierarchy.",
+    type: "textarea",
+    required: false,
+  },
+  {
+    id: "deployment_device",
+    label: "Expected deployment & device preference",
+    description: "e.g., Desktop-first web app, mobile-optimized responsive web.",
+    type: "text",
+    required: false,
+  },
+];
+
 export function defaultIntakeFormConfig(userId: string, token: string): IntakeFormConfig {
   return {
     id: token,
@@ -137,7 +219,7 @@ export function defaultIntakeFormConfig(userId: string, token: string): IntakeFo
     description: "A few questions so we can scope your build accurately — this takes about two minutes.",
     companyName: "",
     accentColor: "#3b82f6",
-    customQuestions: [],
+    customQuestions: DEFAULT_INTAKE_QUESTIONS.map(q => ({ ...q })),
     notificationEmails: [],
     isPublished: false,
     updatedAt: new Date().toISOString(),

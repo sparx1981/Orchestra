@@ -18,7 +18,7 @@ import { EnquiryStatusBadge } from "@/src/components/briefbridge/EnquiryTable";
 import { compileEnquiryToPrompt } from "@/src/lib/briefBridgePrompt";
 import { deleteEnquiry, updateEnquiryNotes, updateEnquiryStatus } from "@/src/lib/briefBridgeService";
 import type { Enquiry, EnquiryStatus, IntakeFormConfig, PipeToPromptOptions, PipeToPromptTool } from "@/src/types/briefBridge";
-import { BUDGET_TIER_LABELS, ENQUIRY_STATUS_LABELS, TARGET_LAUNCH_LABELS } from "@/src/types/briefBridge";
+import { BUDGET_TIER_LABELS, ENQUIRY_STATUS_LABELS, TARGET_LAUNCH_LABELS, enquiryClientFullName } from "@/src/types/briefBridge";
 import type { CustomAgent } from "@/src/App";
 import { DEFAULT_PRODUCT_AGENTS } from "@/src/lib/productSpecTypes";
 
@@ -134,7 +134,7 @@ export function EnquiryDetailDrawer({ enquiry, config, userId, productTeam, call
 
   async function handleDelete() {
     if (!enquiry) return;
-    if (!confirm(`Delete the enquiry from ${enquiry.clientName}? This can't be undone.`)) return;
+    if (!confirm(`Delete the enquiry from ${enquiryClientFullName(enquiry)}? This can't be undone.`)) return;
     await deleteEnquiry(userId, enquiry.id);
     onClose();
   }
@@ -148,7 +148,7 @@ export function EnquiryDetailDrawer({ enquiry, config, userId, productTeam, call
             <EnquiryStatusBadge status={enquiry.status} />
           </div>
           <SheetDescription>
-            {enquiry.clientName} · {enquiry.clientEmail}{enquiry.clientCompany ? ` · ${enquiry.clientCompany}` : ""}
+            {enquiryClientFullName(enquiry)} · {enquiry.clientEmail}{enquiry.clientCompany ? ` · ${enquiry.clientCompany}` : ""}
           </SheetDescription>
         </SheetHeader>
 
