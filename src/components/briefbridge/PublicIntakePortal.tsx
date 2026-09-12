@@ -256,26 +256,24 @@ export function PublicIntakePortal({ token }: { token: string }) {
                   </SelectContent>
                 </Select>
               ) : q.type === "multi_select" ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-1.5">
                   {(q.options || []).map(opt => {
+                    const optionId = `${q.id}__${opt}`;
                     const selected = ((customAnswers[q.id] as string[]) || []).includes(opt);
                     return (
-                      <button
-                        type="button"
-                        key={opt}
-                        onClick={() =>
-                          setCustomAnswers(prev => {
-                            const current = (prev[q.id] as string[]) || [];
-                            return { ...prev, [q.id]: selected ? current.filter(v => v !== opt) : [...current, opt] };
-                          })
-                        }
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                          selected ? "text-white border-transparent" : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
-                        }`}
-                        style={selected ? { backgroundColor: accent } : undefined}
-                      >
-                        {opt}
-                      </button>
+                      <div key={opt} className="flex items-center gap-2">
+                        <Checkbox
+                          id={optionId}
+                          checked={selected}
+                          onCheckedChange={checked =>
+                            setCustomAnswers(prev => {
+                              const current = (prev[q.id] as string[]) || [];
+                              return { ...prev, [q.id]: checked ? [...current, opt] : current.filter(v => v !== opt) };
+                            })
+                          }
+                        />
+                        <Label htmlFor={optionId} className="font-normal">{opt}</Label>
+                      </div>
                     );
                   })}
                 </div>
