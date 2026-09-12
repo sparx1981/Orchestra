@@ -31,10 +31,19 @@ export function IntakeFormBuilderDialog({ open, onOpenChange, config }: IntakeFo
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [emailsRaw, setEmailsRaw] = useState(config.notificationEmails.join(", "));
+  // Raw, as-typed text for each question's options field, keyed by question id — kept
+  // separate from the parsed `options` array on the question itself. The options Input used
+  // to be a "controlled" field whose displayed value was q.options.join(", ") recomputed on
+  // every keystroke from the split/trimmed/filtered array; that silently ate a trailing
+  // comma (split produces a trailing "" that gets filtered out) or a trailing space (trim)
+  // the instant you typed it, making it look like the field refused those characters. This
+  // lets the field show exactly what was typed while still keeping options in sync live.
+  const [optionsRaw, setOptionsRaw] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setDraft(config);
     setEmailsRaw(config.notificationEmails.join(", "));
+    setOptionsRaw(Object.fromEntries(config.customQuestions.map(q => [q.id, (q.options || []).join(", ")])));
   }, [config, open]);
 
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/intake/${draft.token}` : `/intake/${draft.token}`;
@@ -56,6 +65,16 @@ export function IntakeFormBuilderDialog({ open, onOpenChange, config }: IntakeFo
 
   function removeQuestion(id: string) {
     setDraft(d => ({ ...d, customQuestions: d.customQuestions.filter(q => q.id !== id) }));
+    setOptionsRaw(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function updateOptionsRaw(id: string, raw: string) {
+    setOptionsRaw(prev => ({ ...prev, [id]: raw }));
+    updateQuestion(id, { options: raw.split(",").map(s => s.trim()).filter(Boolean) });
   }
 
   // Only appends default questions the config doesn't already have (matched by id, since a
@@ -171,8 +190,8 @@ export function IntakeFormBuilderDialog({ open, onOpenChange, config }: IntakeFo
                 {(q.type === "select" || q.type === "multi_select") && (
                   <Input
                     placeholder="Options, comma-separated"
-                    value={(q.options || []).join(", ")}
-                    onChange={e => updateQuestion(q.id, { options: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
+                    value={optionsRaw[q.id] ?? (q.options || []).join(", ")}
+                    onChange={e => updateOptionsRaw(q.id, e.target.value)}
                   />
                 )}
                 <label className="flex items-center gap-1.5 text-xs text-slate-500">
