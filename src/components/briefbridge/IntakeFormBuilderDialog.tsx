@@ -11,9 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Sparkles, Trash2 } from "lucide-react";
 import { saveIntakeConfig } from "@/src/lib/briefBridgeService";
 import type { CustomQuestion, CustomQuestionType, IntakeFormConfig } from "@/src/types/briefBridge";
+import { DEFAULT_INTAKE_QUESTIONS } from "@/src/types/briefBridge";
 
 function newQuestion(): CustomQuestion {
   return { id: `q_${Math.random().toString(36).slice(2, 10)}`, label: "", type: "text", required: false };
@@ -55,6 +56,20 @@ export function IntakeFormBuilderDialog({ open, onOpenChange, config }: IntakeFo
 
   function removeQuestion(id: string) {
     setDraft(d => ({ ...d, customQuestions: d.customQuestions.filter(q => q.id !== id) }));
+  }
+
+  // Only appends default questions the config doesn't already have (matched by id, since a
+  // developer may have edited a default's label/type after it was seeded — this shouldn't
+  // clobber that). Needed because DEFAULT_INTAKE_QUESTIONS is only ever seeded automatically
+  // onto a BRAND NEW form (see defaultIntakeFormConfig / EnquiryHub's ensureConfig) — an
+  // existing config from before these defaults existed, or one a developer cleared, never
+  // gets them any other way.
+  const missingDefaultQuestions = DEFAULT_INTAKE_QUESTIONS.filter(
+    dq => !draft.customQuestions.some(q => q.id === dq.id)
+  );
+
+  function addDefaultQuestions() {
+    setDraft(d => ({ ...d, customQuestions: [...d.customQuestions, ...missingDefaultQuestions.map(q => ({ ...q }))] }));
   }
 
   function copyLink() {
@@ -118,9 +133,16 @@ export function IntakeFormBuilderDialog({ open, onOpenChange, config }: IntakeFo
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>Custom questions</Label>
-              <Button type="button" size="sm" variant="outline" onClick={() => setDraft(d => ({ ...d, customQuestions: [...d.customQuestions, newQuestion()] }))} className="gap-1.5 h-7 text-xs">
-                <Plus className="w-3.5 h-3.5" /> Add question
-              </Button>
+              <div className="flex items-center gap-2">
+                {missingDefaultQuestions.length > 0 && (
+                  <Button type="button" size="sm" variant="outline" onClick={addDefaultQuestions} className="gap-1.5 h-7 text-xs">
+                    <Sparkles className="w-3.5 h-3.5" /> Add default questions ({missingDefaultQuestions.length})
+                  </Button>
+                )}
+                <Button type="button" size="sm" variant="outline" onClick={() => setDraft(d => ({ ...d, customQuestions: [...d.customQuestions, newQuestion()] }))} className="gap-1.5 h-7 text-xs">
+                  <Plus className="w-3.5 h-3.5" /> Add question
+                </Button>
+              </div>
             </div>
 
             {draft.customQuestions.length === 0 && (
