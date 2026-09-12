@@ -44,7 +44,6 @@ export function PublicIntakePortal({ token }: { token: string }) {
   const [clientEmail, setClientEmail] = useState("");
   const [clientCompany, setClientCompany] = useState("");
   const [projectTitle, setProjectTitle] = useState("");
-  const [assetLinksRaw, setAssetLinksRaw] = useState("");
   const [customAnswers, setCustomAnswers] = useState<Record<string, CustomFieldResponse>>({});
   // Per-question error for "file"-type answers (too large, or failed to read) — kept
   // separate from `error` (the whole-form submit error) since it's specific to one field.
@@ -109,17 +108,17 @@ export function PublicIntakePortal({ token }: { token: string }) {
         clientEmail: clientEmail.trim().toLowerCase(),
         clientCompany: clientCompany.trim() || undefined,
         projectTitle: projectTitle.trim(),
-        // Target launch, budget range, tech preferences, and a free-text project
-        // description are no longer asked on the form (the structured custom questions —
-        // core problem, feature requirements, MVP scope, etc. — cover that ground instead).
-        // These fields still exist on Enquiry/PublicIntakeSubmission for older submissions
-        // and downstream code that reads them, so fixed neutral defaults are submitted
-        // rather than removing the fields outright.
+        // Target launch, budget range, tech preferences, reference links, and a free-text
+        // project description are no longer asked on the form (the structured custom
+        // questions — core problem, feature requirements, MVP scope, etc. — cover that
+        // ground instead). These fields still exist on Enquiry/PublicIntakeSubmission for
+        // older submissions and downstream code that reads them, so fixed neutral defaults
+        // are submitted rather than removing the fields outright.
         projectDescription: "",
         budgetTier: "undisclosed",
         targetLaunch: "flexible",
         techPreferences: [],
-        assetLinks: assetLinksRaw.split("\n").map(s => s.trim()).filter(Boolean),
+        assetLinks: [],
         customAnswers,
         _gotcha: gotcha || undefined,
       });
@@ -208,11 +207,6 @@ export function PublicIntakePortal({ token }: { token: string }) {
           <div className="space-y-1.5">
             <Label htmlFor="projectTitle">Project name *</Label>
             <Input id="projectTitle" required value={projectTitle} onChange={e => setProjectTitle(e.target.value)} maxLength={200} />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="assetLinks">Reference links (optional, one per line)</Label>
-            <Textarea id="assetLinks" rows={2} value={assetLinksRaw} onChange={e => setAssetLinksRaw(e.target.value)} placeholder="https://..." />
           </div>
 
           {form.customQuestions.map(q => (
