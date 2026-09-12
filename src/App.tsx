@@ -4456,6 +4456,62 @@ export default function App() {
     return currentKnowledgeFiles.filter(f => f.content && f.sourceType !== "image");
   }, [currentKnowledgeFiles]);
 
+  // Attaches an image the user supplies as style inspiration for a Product Spec (see the
+  // "Do you have style inspiration?" pre-flight question in ProductTab) to the knowledge
+  // base, scoped to the Product tab exactly like any other product-only upload. Kept
+  // separate from handleFileUpload's own image branch (rather than reused) since that one
+  // is wired to a generic multi-file input and reads `activeTab` to decide scoping —
+  // this is always product-scoped and needs to resolve with the created KnowledgeFile so
+  // ProductTab can record its id against the question.
+  const addStyleInspirationImage = (file: File): Promise<KnowledgeFile> => {
+    return new Promise((resolve, reject) => {
+      if (file.size > MAX_IMAGE_BYTES) {
+        reject(new Error(`"${file.name}" is too large (max ${formatBytes(MAX_IMAGE_BYTES)} per image).`));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        const newFile: KnowledgeFile = {
+          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: file.name,
+          content: dataUrl || "",
+          size: file.size,
+          uploadedAt: new Date().toISOString(),
+          sourceType: "image",
+          targetTab: "product",
+        };
+        setKnowledgeFiles(prev => [...prev, newFile]);
+        saveKnowledgeSource(newFile);
+        logDebug("info", `Attached style inspiration image "${file.name}"`, formatBytes(file.size));
+        resolve(newFile);
+      };
+      reader.onerror = () => reject(new Error(`Failed to read image "${file.name}"`));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Same idea as addStyleInspirationImage, for a pasted URL — stored as a "website" source
+  // exactly like the main Knowledge Base panel's link sources (no content is fetched here
+  // either; see addLinkSource), just always product-scoped and resolving synchronously
+  // with the created KnowledgeFile.
+  const addStyleInspirationUrl = (url: string): KnowledgeFile => {
+    const newFile: KnowledgeFile = {
+      id: `src_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      name: url,
+      content: "",
+      size: 0,
+      uploadedAt: new Date().toISOString(),
+      sourceType: "website",
+      url,
+      targetTab: "product",
+    };
+    setKnowledgeFiles(prev => [...prev, newFile]);
+    saveKnowledgeSource(newFile);
+    logDebug("info", `Attached style inspiration link "${url}"`);
+    return newFile;
+  };
+
   const buildKnowledgeContext = useCallback(() => {
     if (knowledgeFiles.length === 0) return "";
     const contentSources = contentBearingKnowledgeFiles;
@@ -10793,6 +10849,8 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                         }}
                         onBackupToDrive={backupProductSpecToDrive}
                         isBackingUpToDrive={isBackingUpToDrive}
+                        onAddStyleInspirationImage={addStyleInspirationImage}
+                        onAddStyleInspirationUrl={addStyleInspirationUrl}
                       />
                     ) : (
                       <div className="max-w-[1700px] mx-auto space-y-6">

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CustomAgent, KnowledgeFile } from "@/src/App";
-import type { ProductSpec, ProductSpecSection, VibeCodingTool, ProductGenerationDepth } from "@/src/lib/productSpecTypes";
+import type { ProductSpec, ProductSpecSection, VibeCodingTool, ProductGenerationDepth, ProductSpecPreflightQuestion } from "@/src/lib/productSpecTypes";
 import {
   VIBE_CODING_TOOLS,
   DEFAULT_PRODUCT_AGENTS,
@@ -92,6 +92,11 @@ interface ProductTabProps {
   // happen on a click, with its own consent prompt, never silently.
   onBackupToDrive?: (spec: ProductSpec) => Promise<{ success: boolean; webViewLink?: string; error?: string }>;
   isBackingUpToDrive?: boolean;
+  // Attach a new style-inspiration image/URL to the knowledge base (see the fixed
+  // "style inspiration" pre-flight question below) — resolves with the created
+  // KnowledgeFile so its id can be recorded against the question.
+  onAddStyleInspirationImage?: (file: File) => Promise<KnowledgeFile>;
+  onAddStyleInspirationUrl?: (url: string) => KnowledgeFile;
 }
 
 export function ProductTab({
@@ -111,6 +116,8 @@ export function ProductTab({
   onSpecChange,
   onBackupToDrive,
   isBackingUpToDrive,
+  onAddStyleInspirationImage,
+  onAddStyleInspirationUrl,
 }: ProductTabProps) {
   const [internalPrompt, setInternalPrompt] = useState("");
   const prompt = productPrompt !== undefined ? productPrompt : internalPrompt;
@@ -221,13 +228,36 @@ export function ProductTab({
   // Flattened, editable list of every pre-flight Q&A (across all "Ask More Questions"
   // rounds) shown on the confirmation screen — the user can tweak wording here before
   // generation actually starts.
-  const [confirmQA, setConfirmQA] = useState<{ id: string; question: string; answer?: string }[]>([]);
-  const [preflightQuestions, setPreflightQuestions] = useState<{ id: string; question: string }[]>([]);
+  const [confirmQA, setConfirmQA] = useState<ProductSpecPreflightQuestion[]>([]);
+  const [preflightQuestions, setPreflightQuestions] = useState<ProductSpecPreflightQuestion[]>([]);
   const [preflightAnswers, setPreflightAnswers] = useState<Record<string, string>>({});
   // Q&A from completed rounds — frozen/read-only once a round is submitted via "Ask More
   // Questions". The active round lives in preflightQuestions/preflightAnswers above.
-  const [preflightLocked, setPreflightLocked] = useState<{ id: string; question: string; answer?: string }[]>([]);
+  const [preflightLocked, setPreflightLocked] = useState<ProductSpecPreflightQuestion[]>([]);
   const [isAskingMorePreflight, setIsAskingMorePreflight] = useState(false);
+
+  // Fixed id for the one pre-flight question that's always asked (never LLM-generated) —
+  // whether the product owner has style inspiration to ground the visual design on. Fixed
+  // rather than timestamp-based since it's only ever created once per generation attempt
+  // and needs a stable id to look up while the user is still interacting with it.
+  const STYLE_INSPIRATION_QUESTION_ID = "pf_style_inspiration";
+  const STYLE_INSPIRATION_QUESTION_TEXT =
+    "Do you have any style inspiration — an image or a website/URL — that should guide the app's visual design?";
+  const makeStyleInspirationQuestion = (): ProductSpecPreflightQuestion => ({
+    id: STYLE_INSPIRATION_QUESTION_ID,
+    question: STYLE_INSPIRATION_QUESTION_TEXT,
+    isStyleInspiration: true,
+  });
+  // UI-only state for how the user is currently answering the style-inspiration question —
+  // not part of preflightQuestions itself since it's about the picker widget, not the Q&A
+  // record (which only needs the final answer text + chosen file id, set once resolved).
+  const [styleInspirationMode, setStyleInspirationMode] = useState<"undecided" | "existing" | "new_url">("undecided");
+  const [styleInspirationUrlDraft, setStyleInspirationUrlDraft] = useState("");
+  const [isAttachingStyleInspiration, setIsAttachingStyleInspiration] = useState(false);
+  const styleInspirationCandidates = useMemo(
+    () => knowledgeFiles.filter(f => f.sourceType === "image" || f.sourceType === "website"),
+    [knowledgeFiles]
+  );
 
   // Which section's revision history panel is currently expanded (one at a time).
   const [expandedHistorySectionId, setExpandedHistorySectionId] = useState<string | null>(null);
@@ -353,6 +383,8 @@ Do not write the full spec yet — produce a concise, inspiring, well-structured
     setPreflightAnswers({});
     setPreflightQuestions([]);
     setPreflightLocked([]);
+    setStyleInspirationMode("undecided");
+    setStyleInspirationUrlDraft("");
     setPreflightState("checking");
     try {
       const leadAgent = effectiveTeam[0];
@@ -370,45 +402,58 @@ ${projectTypeNote}${otherKbNote}
 Only ask about things that would meaningfully change the architecture or scope depending on the answer (e.g. single-user vs. multi-tenant, offline/local-first requirements, auth model, monetization, target platform). Do NOT ask anything you could reasonably assume a sensible default for — most ideas need zero or one question.
 Respond with ONLY a raw JSON object, no markdown fences, no commentary:
 { "needsClarification": boolean, "questions": ["question 1", "question 2"] }`;
-      const raw = await callAgent(leadAgent, `APP IDEA:\n${prompt.trim()}`, checkInstruction);
-      const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-      if (parsed?.needsClarification && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
-        const qs = parsed.questions
-          .filter((q: any) => typeof q === "string" && q.trim())
-          .slice(0, 4)
-          .map((q: string, i: number) => ({ id: `pf_${Date.now()}_${i}`, question: q.trim() }));
-        if (qs.length > 0) {
-          setPreflightQuestions(qs);
-          setPreflightState("asking");
-          logDebug("info", `Lead agent asked ${qs.length} pre-flight question(s) before drafting`);
-          return; // wait for the user to answer or skip
+      let llmQs: ProductSpecPreflightQuestion[] = [];
+      try {
+        const raw = await callAgent(leadAgent, `APP IDEA:\n${prompt.trim()}`, checkInstruction);
+        const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+        const parsed = JSON.parse(cleaned);
+        if (parsed?.needsClarification && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+          llmQs = parsed.questions
+            .filter((q: any) => typeof q === "string" && q.trim())
+            .slice(0, 4)
+            .map((q: string, i: number) => ({ id: `pf_${Date.now()}_${i}`, question: q.trim() }));
         }
+      } catch (e) {
+        logDebug("warn", "Pre-flight clarification check failed — proceeding with the fixed style-inspiration question only", e);
       }
+      // The style-inspiration question is always asked, regardless of what the lead agent
+      // decided — unlike the rest of pre-flight (which only fires when genuinely ambiguous),
+      // this one has no sensible silent default: skipping it would mean the app never learns
+      // about style inspiration unless the user thinks to attach it unprompted.
+      setPreflightQuestions([makeStyleInspirationQuestion(), ...llmQs]);
+      setPreflightState("asking");
+      logDebug("info", `Pre-flight: style-inspiration question plus ${llmQs.length} question(s) from the lead agent`);
+      return; // wait for the user to answer or skip
     } catch (e) {
-      logDebug("warn", "Pre-flight clarification check failed — proceeding straight to drafting", e);
+      logDebug("warn", "Pre-flight check failed unexpectedly — proceeding straight to drafting", e);
     }
     setConfirmQA([]);
     setPreflightState("confirming");
   };
 
+  // The style-inspiration question's answer is set directly on the question object (by the
+  // picker widget below, when the user chooses/attaches a file or says "no") rather than via
+  // preflightAnswers — it's not a plain text field, so it must be preserved here rather than
+  // overwritten with whatever (nothing) preflightAnswers has for its id.
+  const freezeCurrentRound = () =>
+    preflightQuestions.map(q =>
+      q.isStyleInspiration ? q : { ...q, answer: preflightAnswers[q.id]?.trim() || undefined }
+    );
+
   const handleSkipPreflight = () => {
-    const currentRound = preflightQuestions.map(q => ({ ...q, answer: preflightAnswers[q.id]?.trim() || undefined }));
-    setConfirmQA([...preflightLocked, ...currentRound]);
+    setConfirmQA([...preflightLocked, ...freezeCurrentRound()]);
     setPreflightState("confirming");
   };
 
   const handleSubmitPreflight = () => {
-    const currentRound = preflightQuestions.map(q => ({ ...q, answer: preflightAnswers[q.id]?.trim() || undefined }));
-    setConfirmQA([...preflightLocked, ...currentRound]);
+    setConfirmQA([...preflightLocked, ...freezeCurrentRound()]);
     setPreflightState("confirming");
   };
 
   // Freezes the active round's answers, then asks the Lead Architect whether — now
   // knowing those answers — anything ELSE genuinely needs clarifying before drafting.
   const handleAskMorePreflight = async () => {
-    const currentRound = preflightQuestions.map(q => ({ ...q, answer: preflightAnswers[q.id]?.trim() || undefined }));
-    const allSoFar = [...preflightLocked, ...currentRound];
+    const allSoFar = [...preflightLocked, ...freezeCurrentRound()];
     setPreflightLocked(allSoFar);
     setPreflightQuestions([]);
     setPreflightAnswers({});
@@ -447,6 +492,67 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
     }
   };
 
+  // Hidden file input backing the style-inspiration "Upload image" button below.
+  const styleInspirationFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Records the user's style-inspiration choice (existing file, newly uploaded image, or
+  // newly pasted URL) onto the fixed question itself, as both a human-readable answer (fed
+  // into every section's drafting prompt) and the KnowledgeFile id (so the generated spec
+  // can reference exactly which source it was). The image/URL content itself reaches
+  // vision-capable agents automatically once attached to the knowledge base — see
+  // getVisionImageParts in App.tsx — this just makes sure every agent is told it exists.
+  const applyStyleInspirationChoice = (file: KnowledgeFile) => {
+    setPreflightQuestions(prev => prev.map(p =>
+      p.isStyleInspiration
+        ? {
+            ...p,
+            styleInspirationFileId: file.id,
+            answer: `Yes — use "${file.name}" (${file.sourceType === "image" ? "an uploaded image" : "a website/URL"}) as style inspiration.`,
+          }
+        : p
+    ));
+    setStyleInspirationMode("undecided");
+  };
+
+  const handleStyleInspirationFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !onAddStyleInspirationImage) return;
+    setIsAttachingStyleInspiration(true);
+    try {
+      const newFile = await onAddStyleInspirationImage(file);
+      applyStyleInspirationChoice(newFile);
+    } catch (err: any) {
+      logDebug("error", "Failed to attach style inspiration image", err?.message || err);
+    } finally {
+      setIsAttachingStyleInspiration(false);
+    }
+  };
+
+  const handleStyleInspirationUrlSubmit = () => {
+    const url = styleInspirationUrlDraft.trim();
+    if (!url || !onAddStyleInspirationUrl) return;
+    const newFile = onAddStyleInspirationUrl(url);
+    applyStyleInspirationChoice(newFile);
+    setStyleInspirationUrlDraft("");
+  };
+
+  const handleStyleInspirationSkip = () => {
+    setPreflightQuestions(prev => prev.map(p =>
+      p.isStyleInspiration
+        ? { ...p, styleInspirationFileId: undefined, answer: "No style inspiration provided — use your own design judgment." }
+        : p
+    ));
+    setStyleInspirationMode("undecided");
+  };
+
+  const handleStyleInspirationChangeAnswer = () => {
+    setPreflightQuestions(prev => prev.map(p =>
+      p.isStyleInspiration ? { ...p, styleInspirationFileId: undefined, answer: undefined } : p
+    ));
+    setStyleInspirationMode("undecided");
+  };
+
   // Final step before any model calls happen: a summary of every choice that's about to
   // shape generation (project type, target tool, depth, and every pre-flight answer),
   // editable in place, so the user isn't committing to a 10+ call pipeline on a typo or a
@@ -462,7 +568,7 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
   };
 
   // Generate High-Detail Product Spec
-  const runSpecGeneration = async (preflight: { id: string; question: string; answer?: string }[]) => {
+  const runSpecGeneration = async (preflight: ProductSpecPreflightQuestion[]) => {
     if (!prompt.trim() || effectiveTeam.length === 0) return;
 
     setIsGenerating(true);
@@ -488,6 +594,23 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
             .join("\n\n")}`
         : "";
 
+      // The style-inspiration file itself (if an image) already reaches every vision-capable
+      // agent automatically once attached to the knowledge base (see getVisionImageParts in
+      // App.tsx) — this note is what actually tells the agents it's there and what to DO with
+      // it, since nothing else in the prompt would otherwise connect "there's an image in the
+      // knowledge base" to "use it to inform the Design Vibe and UI/UX sections."
+      const styleInspirationQA = preflight.find(q => q.isStyleInspiration && q.styleInspirationFileId);
+      const styleInspirationFile = styleInspirationQA
+        ? knowledgeFiles.find(f => f.id === styleInspirationQA.styleInspirationFileId)
+        : null;
+      const styleInspirationContext = styleInspirationFile
+        ? `\n\n🎨 STYLE INSPIRATION PROVIDED: The product owner attached "${styleInspirationFile.name}" as visual style inspiration for this app. ${
+            styleInspirationFile.sourceType === "image"
+              ? "It is included above/alongside as an actual image — look at it directly and analyze its real color palette, typography feel, layout density, imagery style, and overall mood."
+              : `It is a website/URL reference (${styleInspirationFile.url || styleInspirationFile.name}) — consider the visual style it suggests.`
+          } Explicitly ground the "Design Vibe" part of the Executive Overview section, and the visual details (color palette, typography, spacing, component style) throughout the Screen-by-Screen UI/UX section, in this reference rather than inventing a generic aesthetic.`
+        : "";
+
       // Per-file character budget for knowledge-base grounding. A codebase source (linked
       // GitHub repo or uploaded .zip) is a pre-built, already-prioritized digest — a small
       // slice of it would defeat the point, so it gets the same "one full grounded source"
@@ -507,7 +630,7 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
           : `\n\n⚠️ PROJECT TYPE: UPDATE TO AN EXISTING APPLICATION — READ BEFORE DRAFTING ANY SECTION ⚠️\nThis is an update to an application already in production, NOT a greenfield build — but no existing codebase was attached to ground it on. Do NOT assume a specific existing stack, file structure, or architecture. Where a section's instructions below say to "recommend" a stack, instead state clearly that the existing stack is unknown and describe the update in stack-agnostic terms. Prefer flagging a genuine unknown via the QUESTIONS_FOR_USER mechanism (see below) over guessing at anything architecturally significant about the current system.`
         : "";
 
-      const kbContext = `${projectTypeContext}${contentBearingKnowledgeFiles.length > 0
+      const kbContext = `${projectTypeContext}${styleInspirationContext}${contentBearingKnowledgeFiles.length > 0
         ? `\n\nKNOWLEDGE BASE CONTEXT (${contentBearingKnowledgeFiles.length} files attached):\n${contentBearingKnowledgeFiles
             .map(f => {
               const cap = f.sourceType === "github" || f.sourceType === "codebase_zip" ? KB_CODEBASE_FILE_CHAR_CAP : KB_FILE_CHAR_CAP;
@@ -1359,24 +1482,104 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
                 </div>
                 {preflightQuestions.length > 0 && (
                   <div className="space-y-2.5">
-                    {preflightQuestions.map(q => (
-                      <div key={q.id} className="space-y-1">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300">{q.question}</label>
-                        <Input
-                          value={preflightAnswers[q.id] || ""}
-                          onChange={(e) => setPreflightAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                          placeholder="Your answer (optional — leave blank to let the team assume a sensible default)"
-                          className="h-8 text-xs bg-card"
-                        />
-                      </div>
-                    ))}
+                    {preflightQuestions.map(q =>
+                      q.isStyleInspiration ? (
+                        <div key={q.id} className="space-y-2 p-2.5 rounded-lg border border-blue-200/70 dark:border-blue-900/40 bg-card">
+                          <label className="text-xs font-medium text-slate-700 dark:text-slate-300">{q.question}</label>
+                          {q.answer ? (
+                            <div className="flex items-center justify-between gap-2 text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/20 rounded-md px-2 py-1.5">
+                              <span className="truncate">{q.answer}</span>
+                              <button type="button" onClick={handleStyleInspirationChangeAnswer} className="text-slate-400 hover:text-slate-600 shrink-0 text-[11px] underline">
+                                Change
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap gap-1.5">
+                                <Button
+                                  type="button" size="sm" variant={styleInspirationMode === "existing" ? "default" : "outline"}
+                                  className="h-7 text-[11px]"
+                                  onClick={() => setStyleInspirationMode(m => m === "existing" ? "undecided" : "existing")}
+                                  disabled={styleInspirationCandidates.length === 0}
+                                >
+                                  Pick from knowledge base{styleInspirationCandidates.length > 0 ? ` (${styleInspirationCandidates.length})` : ""}
+                                </Button>
+                                <Button
+                                  type="button" size="sm" variant="outline" className="h-7 text-[11px]"
+                                  onClick={() => styleInspirationFileInputRef.current?.click()}
+                                  disabled={isAttachingStyleInspiration || !onAddStyleInspirationImage}
+                                >
+                                  {isAttachingStyleInspiration ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Upload image"}
+                                </Button>
+                                <Button
+                                  type="button" size="sm" variant={styleInspirationMode === "new_url" ? "default" : "outline"}
+                                  className="h-7 text-[11px]"
+                                  onClick={() => setStyleInspirationMode(m => m === "new_url" ? "undecided" : "new_url")}
+                                  disabled={!onAddStyleInspirationUrl}
+                                >
+                                  Paste a URL
+                                </Button>
+                                <Button type="button" size="sm" variant="ghost" className="h-7 text-[11px] text-slate-500" onClick={handleStyleInspirationSkip}>
+                                  No, skip this
+                                </Button>
+                              </div>
+                              <input
+                                ref={styleInspirationFileInputRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={handleStyleInspirationFileUpload}
+                              />
+                              {styleInspirationMode === "existing" && (
+                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                  {styleInspirationCandidates.map(f => (
+                                    <button
+                                      key={f.id}
+                                      type="button"
+                                      onClick={() => applyStyleInspirationChoice(f)}
+                                      className="text-[11px] px-2 py-1 rounded-md border border-slate-200 dark:border-slate-800 hover:border-blue-400 hover:text-blue-600 truncate max-w-[200px]"
+                                      title={f.name}
+                                    >
+                                      {f.sourceType === "image" ? "🖼️" : "🔗"} {f.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {styleInspirationMode === "new_url" && (
+                                <div className="flex gap-1.5 pt-1">
+                                  <Input
+                                    value={styleInspirationUrlDraft}
+                                    onChange={(e) => setStyleInspirationUrlDraft(e.target.value)}
+                                    placeholder="https://example.com/design-reference"
+                                    className="h-7 text-xs bg-card"
+                                  />
+                                  <Button type="button" size="sm" className="h-7 text-[11px] shrink-0" onClick={handleStyleInspirationUrlSubmit} disabled={!styleInspirationUrlDraft.trim()}>
+                                    Attach
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div key={q.id} className="space-y-1">
+                          <label className="text-xs font-medium text-slate-700 dark:text-slate-300">{q.question}</label>
+                          <Input
+                            value={preflightAnswers[q.id] || ""}
+                            onChange={(e) => setPreflightAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
+                            placeholder="Your answer (optional — leave blank to let the team assume a sensible default)"
+                            className="h-8 text-xs bg-card"
+                          />
+                        </div>
+                      )
+                    )}
                   </div>
                 )}
                 <div className="flex gap-2 pt-1 flex-wrap">
                   <Button
                     size="sm"
                     onClick={handleSubmitPreflight}
-                    disabled={isAskingMorePreflight}
+                    disabled={isAskingMorePreflight || preflightQuestions.some(q => q.isStyleInspiration && !q.answer)}
                     className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
                   >
                     <Check className="w-3.5 h-3.5" /> {preflightQuestions.length > 0 ? "Continue With Answers" : "Review & Continue"}
@@ -1441,20 +1644,29 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
                 {confirmQA.length > 0 && (
                   <div className="space-y-2 pt-1 border-t border-emerald-200/60 dark:border-emerald-900/40">
                     <p className="text-xs font-medium text-slate-600 dark:text-slate-300 pt-2">Your pre-flight answers — edit if needed:</p>
-                    {confirmQA.map((qa, idx) => (
-                      <div key={qa.id} className="space-y-1">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300">{qa.question}</label>
-                        <Input
-                          value={qa.answer || ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setConfirmQA(prev => prev.map((p, i) => (i === idx ? { ...p, answer: val || undefined } : p)));
-                          }}
-                          placeholder="(left blank — team will assume a sensible default)"
-                          className="h-8 text-xs bg-card"
-                        />
-                      </div>
-                    ))}
+                    {confirmQA.map((qa, idx) =>
+                      qa.isStyleInspiration ? (
+                        <div key={qa.id} className="space-y-1">
+                          <label className="text-xs font-medium text-slate-700 dark:text-slate-300">{qa.question}</label>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 bg-card border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5">
+                            {qa.answer || "No style inspiration provided — use your own design judgment."}
+                          </p>
+                        </div>
+                      ) : (
+                        <div key={qa.id} className="space-y-1">
+                          <label className="text-xs font-medium text-slate-700 dark:text-slate-300">{qa.question}</label>
+                          <Input
+                            value={qa.answer || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setConfirmQA(prev => prev.map((p, i) => (i === idx ? { ...p, answer: val || undefined } : p)));
+                            }}
+                            placeholder="(left blank — team will assume a sensible default)"
+                            className="h-8 text-xs bg-card"
+                          />
+                        </div>
+                      )
+                    )}
                   </div>
                 )}
 

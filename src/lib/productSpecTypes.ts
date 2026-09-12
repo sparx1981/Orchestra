@@ -82,6 +82,13 @@ export interface ProductSpecPreflightQuestion {
   id: string;
   question: string;
   answer?: string;
+  // Marks the one fixed question always asked (not LLM-generated): whether the product
+  // owner has style inspiration (an image or website/URL) to ground the visual design on.
+  // See ProductTab's STYLE_INSPIRATION_QUESTION.
+  isStyleInspiration?: boolean;
+  // Set when the answer is "yes" — the id of the KnowledgeFile (existing or newly attached
+  // via this question) holding the style inspiration, so generation can reference it.
+  styleInspirationFileId?: string;
 }
 
 export type ProductGenerationDepth = "quick" | "thorough";
