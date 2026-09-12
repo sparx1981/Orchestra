@@ -383,7 +383,8 @@ async function startServer() {
     ]);
   });
 
-  // 2. Multi-Agent Execution (Gemini, Anthropic, Perplexity, Grok).
+  // 2. Multi-Agent Execution (Gemini, Anthropic, OpenAI, Perplexity, Grok, plus the
+  // fallback-only Groq/OpenRouter — see callAgent's tryFallback in App.tsx).
   // All provider calls run server-side so no API key is ever used from the browser.
   app.post("/api/execute-others", async (req, res) => {
     const {
@@ -543,6 +544,49 @@ async function startServer() {
           return { agent: "grok", text };
         } catch (error: any) {
           return { agent: "grok", text: `Error: ${error.message}` };
+        }
+      })());
+    }
+
+    // Groq and OpenRouter — fallback-only providers (see the "Fallback Provider" section in
+    // Settings → API Keys and callAgent's tryFallback in App.tsx). Both are OpenAI-compatible
+    // chat-completions APIs, same shape as Perplexity/Grok above.
+    if (agents.includes("groq")) {
+      tasks.push((async () => {
+        try {
+          const apiKey = keys.groq;
+          if (!apiKey) return { agent: "groq", text: "Groq API Key missing. Please provide it in settings." };
+          const combined = systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt;
+          const text = await callOpenAICompatible(
+            "https://api.groq.com/openai/v1/chat/completions",
+            apiKey,
+            models?.groq || "llama-3.3-70b-versatile",
+            combined,
+            temperature
+          );
+          return { agent: "groq", text };
+        } catch (error: any) {
+          return { agent: "groq", text: `Error: ${error.message}` };
+        }
+      })());
+    }
+
+    if (agents.includes("openrouter")) {
+      tasks.push((async () => {
+        try {
+          const apiKey = keys.openrouter;
+          if (!apiKey) return { agent: "openrouter", text: "OpenRouter API Key missing. Please provide it in settings." };
+          const combined = systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt;
+          const text = await callOpenAICompatible(
+            "https://openrouter.ai/api/v1/chat/completions",
+            apiKey,
+            models?.openrouter || "meta-llama/llama-3.3-70b-instruct:free",
+            combined,
+            temperature
+          );
+          return { agent: "openrouter", text };
+        } catch (error: any) {
+          return { agent: "openrouter", text: `Error: ${error.message}` };
         }
       })());
     }

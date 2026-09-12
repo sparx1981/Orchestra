@@ -319,7 +319,11 @@ interface Results {
 
 export interface CustomAgent {
   id: string;
-  provider: "gemini" | "anthropic" | "openai" | "perplexity" | "grok";
+  // "groq"/"openrouter" are never offered as a selectable provider when creating an agent
+  // (see getAvailableProviders) — they exist on this union solely so a fallback call (see
+  // callAgent's tryFallback) can be represented as an ordinary CustomAgent and go through
+  // the exact same call path as every other provider, no special-casing required.
+  provider: "gemini" | "anthropic" | "openai" | "perplexity" | "grok" | "groq" | "openrouter";
   model: string;
   name: string;
   persona: string;
@@ -855,6 +859,22 @@ const MODEL_OPTIONS = {
     { id: "grok-2-latest", name: "Grok 2" },
     { id: "grok-2-vision-1212", name: "Grok 2 Vision" },
   ],
+  // Fallback-only providers (see the Fallback Provider section in Settings → API Keys and
+  // callAgent's tryFallback) — both have a genuinely free tier, unlike the primary providers
+  // above. Never offered as a selectable provider when creating an agent.
+  groq: [
+    { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B Versatile" },
+    { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B Instant" },
+    { id: "gemma2-9b-it", name: "Gemma 2 9B" },
+  ],
+  openrouter: [
+    // OpenRouter's free-tagged model roster changes over time — these are a reasonable
+    // snapshot, not a permanent guarantee; the model picker lets the user swap to whatever
+    // is currently free on their account.
+    { id: "meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 70B Instruct (Free)" },
+    { id: "mistralai/mistral-7b-instruct:free", name: "Mistral 7B Instruct (Free)" },
+    { id: "google/gemma-2-9b-it:free", name: "Gemma 2 9B (Free)" },
+  ],
 };
 
 const AGENT_LINKS = {
@@ -863,7 +883,19 @@ const AGENT_LINKS = {
   openai: "https://platform.openai.com/api-keys",
   perplexity: "https://www.perplexity.ai/settings/api",
   grok: "https://console.x.ai/",
+  groq: "https://console.groq.com/keys",
+  openrouter: "https://openrouter.ai/keys",
 };
+
+// Providers offered in the "Fallback Provider" section of Settings → API Keys — both have a
+// genuinely free tier, so they're useful as a fallback when the primary provider's quota or
+// billing runs out (see callAgent's tryFallback). Deliberately a short, curated list rather
+// than reusing MODEL_OPTIONS' full provider set — a fallback should be simple to reason
+// about, not "any provider you've configured."
+const FALLBACK_PROVIDER_OPTIONS: { id: "groq" | "openrouter"; name: string }[] = [
+  { id: "groq", name: "Groq" },
+  { id: "openrouter", name: "OpenRouter" },
+];
 
 // Stable, distinct text colors per agent so multi-persona conversations are easy to scan.
 // A single generic, friendly, helpful default persona — used everywhere the app needs to
@@ -1563,15 +1595,21 @@ export default function App() {
   // rather than persisted to Firestore, matching the scope of this specific fix.
   const [notifyOnComplete, setNotifyOnComplete] = useState(false);
   const prevLoadingRef = useRef(false);
-  const [keys, setKeys] = useState({ gemini: "", anthropic: "", openai: "", perplexity: "", grok: "" });
-  const [showKeys, setShowKeys] = useState({ gemini: false, anthropic: false, openai: false, perplexity: false, grok: false });
+  const [keys, setKeys] = useState({ gemini: "", anthropic: "", openai: "", perplexity: "", grok: "", groq: "", openrouter: "" });
+  const [showKeys, setShowKeys] = useState({ gemini: false, anthropic: false, openai: false, perplexity: false, grok: false, groq: false, openrouter: false });
   const [models, setModels] = useState({
     gemini: "gemini-3.8-flash",
     anthropic: "claude-sonnet-5",
     openai: "gpt-5.6-sol",
     perplexity: "sonar-pro",
     grok: "grok-3",
+    groq: "llama-3.3-70b-versatile",
+    openrouter: "meta-llama/llama-3.3-70b-instruct:free",
   });
+  // Which fallback provider (see FALLBACK_PROVIDER_OPTIONS) to retry a call through when the
+  // primary agent's call fails with a quota/billing/auth error — "" means no fallback
+  // configured. See callAgent's tryFallback for where this is actually used.
+  const [fallbackProvider, setFallbackProvider] = useState<"" | "groq" | "openrouter">("");
   const [prompt, setPrompt] = useState("");
   const [outputFormat, setOutputFormat] = useState("Full");
   const [enabledAgents, setEnabledAgents] = useState({ gemini: false, anthropic: false, openai: false, perplexity: false, grok: false });
@@ -2463,14 +2501,17 @@ export default function App() {
       } else {
         setUser(null);
         // Reset keys and settings for new user
-        setKeys({ gemini: "", anthropic: "", openai: "", perplexity: "", grok: "" });
+        setKeys({ gemini: "", anthropic: "", openai: "", perplexity: "", grok: "", groq: "", openrouter: "" });
         setModels({
           gemini: "gemini-3.8-flash",
           anthropic: "claude-sonnet-5",
           openai: "gpt-5.6-sol",
           perplexity: "sonar-pro",
           grok: "grok-3",
+          groq: "llama-3.3-70b-versatile",
+          openrouter: "meta-llama/llama-3.3-70b-instruct:free",
         });
+        setFallbackProvider("");
         setLoopingEnabled(false);
         setMaxLoops(1);
         setProfileName("");
@@ -2504,6 +2545,11 @@ export default function App() {
         }
         if (data.loopingEnabled !== undefined) setLoopingEnabled(data.loopingEnabled);
         if (data.maxLoops !== undefined) setMaxLoops(data.maxLoops);
+        if (data.fallbackProvider === "groq" || data.fallbackProvider === "openrouter") {
+          setFallbackProvider(data.fallbackProvider);
+        } else if (data.fallbackProvider !== undefined) {
+          setFallbackProvider("");
+        }
         if (data.customTeam && Array.isArray(data.customTeam)) {
           const sanitizedTeam = data.customTeam.map((agent: CustomAgent) => {
             const validModels = (MODEL_OPTIONS[agent.provider] || []).map(m => m.id);
@@ -2675,7 +2721,7 @@ export default function App() {
       .catch(() => {}); // leave as null (unknown) rather than assuming either way on failure
   }, [isSettingsOpen, keysEncryptionEnabled]);
 
-  const saveSettings = useCallback(async (newKeys: typeof keys, newModels: typeof models, newLoopingEnabled?: boolean, newMaxLoops?: number) => {
+  const saveSettings = useCallback(async (newKeys: typeof keys, newModels: typeof models, newLoopingEnabled?: boolean, newMaxLoops?: number, newFallbackProvider?: typeof fallbackProvider) => {
     if (!user) return;
     try {
       // Encrypt any plaintext keys server-side before they touch Firestore. Already-encrypted
@@ -2702,6 +2748,7 @@ export default function App() {
         models: newModels,
         loopingEnabled: newLoopingEnabled !== undefined ? newLoopingEnabled : loopingEnabled,
         maxLoops: newMaxLoops !== undefined ? newMaxLoops : maxLoops,
+        fallbackProvider: newFallbackProvider !== undefined ? newFallbackProvider : fallbackProvider,
         updatedAt: serverTimestamp()
       }), { merge: true });
     } catch (error: any) {
@@ -2709,7 +2756,7 @@ export default function App() {
       logDebug("error", "Failed to save settings to cloud", error?.message || error);
       setStatus("Error saving settings to cloud");
     }
-  }, [user]);
+  }, [user, loopingEnabled, maxLoops, fallbackProvider]);
 
   // Persists Output Editor settings (Settings → Editor) separately from the main settings
   // save, since they're independent of API keys/models and change on their own schedule.
@@ -4660,6 +4707,34 @@ export default function App() {
     const callStartedAt = Date.now();
     const promptChars = userContent.length + systemInstruction.length;
     const modelLabel = `${agent.provider}${agent.model ? `/${agent.model}` : ""}`;
+
+    // One-shot retry through the configured fallback provider (see the "Fallback Provider"
+    // section in Settings → API Keys) — tried whenever the primary call is about to be given
+    // up on for good, whether that's an immediately-unrecoverable error (quota/auth) or the
+    // retry budget above running out. Never recurses into its own retry loop: a fallback
+    // that also fails just means the original error is what the caller sees. Returns null
+    // (rather than throwing) when no fallback applies, so both call sites below can treat
+    // "no fallback configured/available" and "fallback also failed" identically.
+    const tryFallback = async (originalErr: any): Promise<string | null> => {
+      if (!fallbackProvider || !keys[fallbackProvider] || agent.provider === fallbackProvider) return null;
+      try {
+        const fallbackAgent: CustomAgent = {
+          id: `${agent.id}_fallback`,
+          provider: fallbackProvider,
+          model: models[fallbackProvider],
+          name: agent.name,
+          persona: agent.persona,
+          temperature: agent.temperature,
+        };
+        const result = await callAgentOnce(fallbackAgent, userContent, systemInstruction, signal);
+        logDebug("warn", `${agent.name} (${modelLabel}) failed — used fallback provider (${fallbackProvider}) instead`, `${originalErr?.message || originalErr}`);
+        return result;
+      } catch (fallbackErr: any) {
+        logDebug("error", `${agent.name} (${modelLabel}) fallback via ${fallbackProvider} also failed`, fallbackErr?.message || fallbackErr);
+        return null;
+      }
+    };
+
     for (let attempt = 1; ; attempt++) {
       try {
         const result = await callAgentOnce(agent, userContent, systemInstruction, signal);
@@ -4683,6 +4758,8 @@ export default function App() {
         const classification = classifyAgentError(err);
         if (classification.isUnrecoverable) {
           logDebug("error", `${agent.name} (${modelLabel}) call failed — not retrying`, `${classification.reason ? unrecoverableErrorGuidance(classification.reason) : (err?.message || err)} — ${promptChars} prompt chars, failed after ${((Date.now() - callStartedAt) / 1000).toFixed(1)}s`);
+          const fallbackResult = await tryFallback(err);
+          if (fallbackResult !== null) return fallbackResult;
           throw err;
         }
         const isOverload = classification.reason === "transient_overload";
@@ -4705,8 +4782,10 @@ export default function App() {
         }
       }
     }
+    const fallbackResult = await tryFallback(lastError);
+    if (fallbackResult !== null) return fallbackResult;
     throw lastError;
-  }, [callAgentOnce, logDebug]);
+  }, [callAgentOnce, logDebug, fallbackProvider, keys, models]);
 
   // Streams a single agent's response, calling onChunk as text arrives and resolving with the
   // full text at the end. Used for the longest single waits (Parallel mode, Chat With The
@@ -9107,7 +9186,11 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                               </div>
                             )}
                             <div className="space-y-6">
-                              {Object.keys(keys).map((k) => (
+                              {/* groq/openrouter live in the same `keys`/`models` state (reusing the
+                                  encrypt/save/decrypt pipeline unchanged) but are rendered only in
+                                  the dedicated Fallback Provider section below, not as ordinary
+                                  provider cards here — they're never a selectable per-agent provider. */}
+                              {Object.keys(keys).filter(k => k !== "groq" && k !== "openrouter").map((k) => (
                                 <div key={k} className="space-y-4 p-5 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border dark:border-slate-800 group hover:border-blue-200 dark:hover:border-blue-900/50 transition-colors">
                                   <div className="flex items-center justify-between">
                                     <Label htmlFor={`${k}-key`} className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-2">
@@ -9162,6 +9245,94 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                                   </div>
                                 </div>
                               ))}
+
+                              {/* Fallback Provider — used automatically when a primary agent's call
+                                  fails with a quota/billing/auth error (see callAgent's
+                                  tryFallback). Both options have a genuinely free tier, which is the
+                                  point: a paid provider running out of credits doesn't have to stop
+                                  a run outright. */}
+                              <div className="space-y-4 p-5 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border dark:border-slate-800">
+                                <div>
+                                  <Label className="text-xs font-medium text-slate-500 dark:text-slate-400">Fallback Provider</Label>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                                    If an agent's call fails with a quota, billing, or authentication error, it's automatically retried once through this provider instead of failing outright.
+                                  </p>
+                                </div>
+
+                                <Select
+                                  value={fallbackProvider || "none"}
+                                  onValueChange={(val) => {
+                                    const next = val === "none" ? "" : (val as "groq" | "openrouter");
+                                    setFallbackProvider(next);
+                                    saveSettings(keys, models, undefined, undefined, next);
+                                  }}
+                                >
+                                  <SelectTrigger className="bg-card h-10 text-sm rounded-xl border-slate-200 dark:border-slate-800">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-xl">
+                                    <SelectItem value="none" className="rounded-lg">None</SelectItem>
+                                    {FALLBACK_PROVIDER_OPTIONS.map(opt => (
+                                      <SelectItem key={opt.id} value={opt.id} className="rounded-lg">{opt.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+
+                                {fallbackProvider && (
+                                  <>
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <Label htmlFor={`${fallbackProvider}-fallback-key`} className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                                          {FALLBACK_PROVIDER_OPTIONS.find(o => o.id === fallbackProvider)?.name} API Key
+                                          <a href={AGENT_LINKS[fallbackProvider]} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline flex items-center gap-0.5 lowercase font-normal">
+                                            <ExternalLink className="w-3 h-3" /> manage
+                                          </a>
+                                        </Label>
+                                      </div>
+                                      <div className="relative">
+                                        <Input
+                                          id={`${fallbackProvider}-fallback-key`}
+                                          type={showKeys[fallbackProvider] ? "text" : "password"}
+                                          placeholder={keys[fallbackProvider]?.startsWith("enc:v1:") ? "Key saved (encrypted) — type to replace" : `Enter ${fallbackProvider} key...`}
+                                          value={keys[fallbackProvider]?.startsWith("enc:v1:") ? "" : keys[fallbackProvider]}
+                                          onChange={(e) => handleKeyChange(fallbackProvider, e.target.value)}
+                                          className="bg-card pr-10 rounded-xl border-slate-200 dark:border-slate-800"
+                                        />
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                                          onClick={() => setShowKeys({ ...showKeys, [fallbackProvider]: !showKeys[fallbackProvider] })}
+                                        >
+                                          {showKeys[fallbackProvider] ? <EyeOff className="w-4 h-4 text-slate-500" /> : <Eye className="w-4 h-4 text-slate-500" />}
+                                        </Button>
+                                      </div>
+                                      {keys[fallbackProvider]?.startsWith("enc:v1:") && (
+                                        <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                          <Lock className="w-3 h-3" /> Stored encrypted — never sent to your browser in plaintext.
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                      <Label className="text-xs font-medium text-slate-500">Model Selection</Label>
+                                      <Select
+                                        value={models[fallbackProvider]}
+                                        onValueChange={(val) => handleModelChange(fallbackProvider, val)}
+                                      >
+                                        <SelectTrigger className="bg-card h-10 text-sm rounded-xl border-slate-200 dark:border-slate-800">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="rounded-xl">
+                                          {MODEL_OPTIONS[fallbackProvider].map(opt => (
+                                            <SelectItem key={opt.id} value={opt.id} className="rounded-lg">{opt.name}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
                             </div>
                           </TabsContent>
 

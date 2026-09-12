@@ -32,7 +32,8 @@ service cloud.firestore {
              (!data.keys().hasAny(['customTeam']) || data.customTeam is list) &&
              (!data.keys().hasAny(['knowledgeFiles']) || data.knowledgeFiles is list) &&
              (!data.keys().hasAny(['loopingEnabled']) || data.loopingEnabled is bool) &&
-             (!data.keys().hasAny(['maxLoops']) || data.maxLoops is int);
+             (!data.keys().hasAny(['maxLoops']) || data.maxLoops is int) &&
+             (!data.keys().hasAny(['fallbackProvider']) || data.fallbackProvider is string);
     }
 
     // ===============================================================
