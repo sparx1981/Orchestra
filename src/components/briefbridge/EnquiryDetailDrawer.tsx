@@ -18,7 +18,13 @@ import { EnquiryStatusBadge } from "@/src/components/briefbridge/EnquiryTable";
 import { compileEnquiryToPrompt } from "@/src/lib/briefBridgePrompt";
 import { deleteEnquiry, updateEnquiryNotes, updateEnquiryStatus } from "@/src/lib/briefBridgeService";
 import type { Enquiry, EnquiryStatus, IntakeFormConfig, PipeToPromptOptions, PipeToPromptTool } from "@/src/types/briefBridge";
-import { BUDGET_TIER_LABELS, ENQUIRY_STATUS_LABELS, TARGET_LAUNCH_LABELS, enquiryClientFullName } from "@/src/types/briefBridge";
+import { BUDGET_TIER_LABELS, ENQUIRY_STATUS_LABELS, TARGET_LAUNCH_LABELS, enquiryClientFullName, isCustomFileAnswer } from "@/src/types/briefBridge";
+
+function formatBytesLabel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 import type { CustomAgent } from "@/src/App";
 import { DEFAULT_PRODUCT_AGENTS } from "@/src/lib/productSpecTypes";
 
@@ -208,20 +214,33 @@ export function EnquiryDetailDrawer({ enquiry, config, userId, productTeam, call
           {config && config.customQuestions.length > 0 && (
             <div className="space-y-2">
               <Label>Additional answers</Label>
-              {config.customQuestions.map(q => (
-                <div key={q.id} className="text-sm">
-                  <p className="text-xs text-slate-400">{q.label}</p>
-                  <p className="text-slate-700 dark:text-slate-200">
-                    {(() => {
-                      const val = enquiry.customAnswers?.[q.id];
-                      if (val === undefined || val === "") return "—";
-                      if (Array.isArray(val)) return val.join(", ") || "—";
-                      if (typeof val === "boolean") return val ? "Yes" : "No";
-                      return String(val);
-                    })()}
-                  </p>
-                </div>
-              ))}
+              {config.customQuestions.map(q => {
+                const val = enquiry.customAnswers?.[q.id];
+                return (
+                  <div key={q.id} className="text-sm">
+                    <p className="text-xs text-slate-400">{q.label}</p>
+                    {isCustomFileAnswer(val) ? (
+                      <a
+                        href={val.dataUrl}
+                        download={val.fileName}
+                        className="text-blue-500 hover:underline inline-flex items-center gap-1"
+                      >
+                        {val.fileName} ({formatBytesLabel(val.size)}) <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : (
+                      <p className="text-slate-700 dark:text-slate-200">
+                        {val === undefined || val === ""
+                          ? "—"
+                          : Array.isArray(val)
+                          ? val.join(", ") || "—"
+                          : typeof val === "boolean"
+                          ? val ? "Yes" : "No"
+                          : String(val)}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 

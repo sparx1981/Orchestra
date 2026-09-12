@@ -15,9 +15,22 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { CheckCircle2, RefreshCw, ShieldAlert, Sparkles } from "lucide-react";
 import { fetchPublicIntakeForm, submitPublicIntake } from "@/src/lib/briefBridgeService";
 import type { BudgetTier, CustomFieldResponse, PublicIntakeFormConfig, TargetLaunchTimeframe } from "@/src/types/briefBridge";
-import { BUDGET_TIER_LABELS, TARGET_LAUNCH_LABELS } from "@/src/types/briefBridge";
+import { BUDGET_TIER_LABELS, TARGET_LAUNCH_LABELS, isCustomFileAnswer } from "@/src/types/briefBridge";
 
 type LoadState = "loading" | "not_found" | "ready";
+
+// Keeps a "file"-type custom answer small enough to leave real headroom under Firestore's
+// 1MB-per-document cap once base64-encoded (~33% inflation) alongside everything else on
+// the enquiry (project description, other custom answers, etc.) — same reasoning as
+// MAX_IMAGE_BYTES in App.tsx, just a bit smaller since an enquiry doc has more going on
+// than a single knowledge-base file does.
+const MAX_CUSTOM_FILE_BYTES = 700 * 1024;
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export function PublicIntakePortal({ token }: { token: string }) {
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -37,8 +50,35 @@ export function PublicIntakePortal({ token }: { token: string }) {
   const [techPreferencesRaw, setTechPreferencesRaw] = useState("");
   const [assetLinksRaw, setAssetLinksRaw] = useState("");
   const [customAnswers, setCustomAnswers] = useState<Record<string, CustomFieldResponse>>({});
+  // Per-question error for "file"-type answers (too large, or failed to read) — kept
+  // separate from `error` (the whole-form submit error) since it's specific to one field.
+  const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
   // Honeypot: real visitors never see this field (visually hidden, tabIndex -1).
   const [gotcha, setGotcha] = useState("");
+
+  function handleCustomFileChange(questionId: string, file: File | null) {
+    if (!file) {
+      setCustomAnswers(prev => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+      setFileErrors(prev => ({ ...prev, [questionId]: "" }));
+      return;
+    }
+    if (file.size > MAX_CUSTOM_FILE_BYTES) {
+      setFileErrors(prev => ({ ...prev, [questionId]: `File is too large (max ${formatFileSize(MAX_CUSTOM_FILE_BYTES)}).` }));
+      return;
+    }
+    setFileErrors(prev => ({ ...prev, [questionId]: "" }));
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setCustomAnswers(prev => ({ ...prev, [questionId]: { fileName: file.name, dataUrl, size: file.size } }));
+    };
+    reader.onerror = () => setFileErrors(prev => ({ ...prev, [questionId]: "Couldn't read that file — try again." }));
+    reader.readAsDataURL(file);
+  }
 
   useEffect(() => {
     (async () => {
@@ -271,6 +311,21 @@ export function PublicIntakePortal({ token }: { token: string }) {
                       </button>
                     );
                   })}
+                </div>
+              ) : q.type === "file" ? (
+                <div className="space-y-1">
+                  <input
+                    id={q.id}
+                    type="file"
+                    onChange={e => handleCustomFileChange(q.id, e.target.files?.[0] || null)}
+                    className="block w-full text-xs text-slate-500 dark:text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-slate-100 dark:file:bg-slate-800 file:text-slate-700 dark:file:text-slate-200 hover:file:bg-slate-200 dark:hover:file:bg-slate-700"
+                  />
+                  {isCustomFileAnswer(customAnswers[q.id]) && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      {(customAnswers[q.id] as any).fileName} ({formatFileSize((customAnswers[q.id] as any).size)}) selected
+                    </p>
+                  )}
+                  {fileErrors[q.id] && <p className="text-xs text-red-500">{fileErrors[q.id]}</p>}
                 </div>
               ) : (
                 <Input

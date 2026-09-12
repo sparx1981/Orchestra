@@ -7,7 +7,7 @@
 // review and hand off to a client relationship.
 
 import type { CustomQuestion, Enquiry, IntakeFormConfig, PipeToPromptOptions } from "@/src/types/briefBridge";
-import { BUDGET_TIER_LABELS, TARGET_LAUNCH_LABELS, enquiryClientFullName } from "@/src/types/briefBridge";
+import { BUDGET_TIER_LABELS, TARGET_LAUNCH_LABELS, enquiryClientFullName, isCustomFileAnswer } from "@/src/types/briefBridge";
 
 const TOOL_LABELS: Record<PipeToPromptOptions["tool"], string> = {
   cursor: "Cursor",
@@ -50,6 +50,12 @@ export function sanitizeClientText(raw: string, maxLength = 4000): string {
 
 function formatCustomAnswer(question: CustomQuestion, value: unknown): string {
   if (value === undefined || value === null || value === "") return "_Not answered_";
+  if (isCustomFileAnswer(value)) {
+    // Never inline the base64 data here — it's meaningless to a text-only drafting agent
+    // and would blow up the compiled prompt's size for nothing. The actual file is only
+    // ever surfaced for a human to open, in EnquiryDetailDrawer's own file link.
+    return `_Uploaded a file: ${sanitizeClientText(value.fileName, 200)}_`;
+  }
   if (Array.isArray(value)) return value.map(v => sanitizeClientText(String(v), 200)).join(", ") || "_Not answered_";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   return sanitizeClientText(String(value), 1000);

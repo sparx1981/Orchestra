@@ -100,6 +100,20 @@ describe("compileEnquiryToPrompt", () => {
     expect(prompt).toContain("Yes please");
   });
 
+  it("references a file-type answer by name without inlining its data", () => {
+    const enquiry = makeEnquiry({
+      customAnswers: { logo: { fileName: "logo.png", dataUrl: "data:image/png;base64,AAAA", size: 1234 } },
+    });
+    const prompt = compileEnquiryToPrompt(enquiry, { customQuestions: [{ id: "logo", label: "Logo or brand assets", type: "file", required: false }] }, {
+      tool: "generic",
+      includeTechStack: true,
+      includeBudgetTimeline: true,
+      includeDesignAssets: true,
+    });
+    expect(prompt).toContain("logo.png");
+    expect(prompt).not.toContain("base64");
+  });
+
   it("falls back to a placeholder title when projectTitle is empty", () => {
     const prompt = compileEnquiryToPrompt(makeEnquiry({ projectTitle: "" }), null, {
       tool: "generic",

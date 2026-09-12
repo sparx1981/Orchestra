@@ -139,6 +139,7 @@ export function IntakeFormBuilderDialog({ open, onOpenChange, config }: IntakeFo
                       <SelectItem value="select">Single choice</SelectItem>
                       <SelectItem value="multi_select">Multiple choice</SelectItem>
                       <SelectItem value="boolean">Yes / No</SelectItem>
+                      <SelectItem value="file">File upload</SelectItem>
                     </SelectContent>
                   </Select>
                   <Button type="button" variant="ghost" size="icon" onClick={() => removeQuestion(q.id)} className="w-8 h-8 text-slate-400 hover:text-red-500 shrink-0">

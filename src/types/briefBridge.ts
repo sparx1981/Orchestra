@@ -15,7 +15,7 @@ export type BudgetTier = "sub_5k" | "5k_15k" | "15k_50k" | "50k_plus" | "undiscl
 
 export type TargetLaunchTimeframe = "immediate" | "within_month" | "one_to_three_months" | "flexible";
 
-export type CustomQuestionType = "text" | "textarea" | "select" | "multi_select" | "boolean";
+export type CustomQuestionType = "text" | "textarea" | "select" | "multi_select" | "boolean" | "file";
 
 export interface CustomQuestion {
   id: string;
@@ -28,7 +28,25 @@ export interface CustomQuestion {
   placeholder?: string;
 }
 
-export type CustomFieldResponse = string | string[] | boolean;
+// A "file"-type answer, uploaded from the public intake form. Stored as a base64 data URL
+// directly on the Enquiry doc (same pattern the rest of Orchestra uses for small knowledge
+// -base images — see MAX_IMAGE_BYTES in App.tsx) rather than in Firebase Storage, since this
+// app has no Storage bucket/rules set up at all; simplest to stay consistent with what
+// already exists. MAX_CUSTOM_FILE_BYTES (in PublicIntakePortal.tsx) keeps it small enough
+// to leave headroom under Firestore's 1MB-per-document cap alongside everything else on
+// the enquiry.
+export interface CustomFileAnswer {
+  fileName: string;
+  dataUrl: string;
+  /** Original file size in bytes, pre-base64 (which inflates by ~33%) — for display only. */
+  size: number;
+}
+
+export function isCustomFileAnswer(val: unknown): val is CustomFileAnswer {
+  return !!val && typeof val === "object" && !Array.isArray(val) && typeof (val as any).dataUrl === "string";
+}
+
+export type CustomFieldResponse = string | string[] | boolean | CustomFileAnswer;
 
 /**
  * Owner-facing configuration for one intake form. `token` doubles as the
@@ -144,9 +162,7 @@ export const ENQUIRY_STATUS_LABELS: Record<EnquiryStatus, string> = {
 // Seeded onto every brand-new intake form (see EnquiryHub's ensureConfig — this never
 // touches a form a developer has already configured, only a form that's never had a config
 // doc at all). Covers only what the fixed fields above (name, email, company, project
-// title/description) don't already ask — no duplicate questions for those. There's no
-// question type for a file upload (see CustomQuestionType), so "brand guidelines" asks for
-// a text/link description rather than an actual upload.
+// title/description) don't already ask — no duplicate questions for those.
 export const DEFAULT_INTAKE_QUESTIONS: CustomQuestion[] = [
   { id: "feature_1", label: "Key feature requirement 1", type: "text", required: false },
   { id: "feature_2", label: "Key feature requirement 2", type: "text", required: false },
@@ -190,8 +206,15 @@ export const DEFAULT_INTAKE_QUESTIONS: CustomQuestion[] = [
   {
     id: "brand_guidelines",
     label: "Are there specific brand guidelines to follow?",
-    description: "e.g., specific color codes, an existing design system, or a link to your logo/brand assets.",
+    description: "e.g., specific color codes or an existing design system.",
     type: "textarea",
+    required: false,
+  },
+  {
+    id: "brand_logo",
+    label: "Logo or brand assets",
+    description: "Upload your logo or any brand asset file, if you have one.",
+    type: "file",
     required: false,
   },
   {
