@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CustomAgent, KnowledgeFile } from "@/src/App";
-import type { ProductSpec, ProductSpecSection, VibeCodingTool, ProductGenerationDepth, ProductSpecPreflightQuestion } from "@/src/lib/productSpecTypes";
+import type { ProductSpec, ProductSpecSection, VibeCodingTool, ProductGenerationDepth, ProductSpecPreflightQuestion, ClientFacingSpecSection } from "@/src/lib/productSpecTypes";
 import {
   VIBE_CODING_TOOLS,
   DEFAULT_PRODUCT_AGENTS,
@@ -8,6 +8,7 @@ import {
 } from "@/src/lib/productSpecTypes";
 import {
   buildProductSpecMarkdown,
+  buildClientFacingSpecMarkdown,
   buildVibeCodingPlaybookMarkdown,
   buildCursorRules,
   downloadFile,
@@ -18,6 +19,11 @@ import {
   buildProductSpecPdf,
   downloadBinaryFile,
 } from "@/src/lib/productSpecExport";
+import {
+  buildClientFacingSpecDocx,
+  buildClientFacingSpecRtf,
+  buildClientFacingSpecPdf,
+} from "@/src/lib/clientFacingSpecExport";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -123,7 +129,7 @@ export function ProductTab({
   const prompt = productPrompt !== undefined ? productPrompt : internalPrompt;
   const setPrompt = setProductPrompt || setInternalPrompt;
   const [selectedTool, setSelectedTool] = useState<VibeCodingTool>("google_ai_studio");
-  const [activeView, setActiveView] = useState<"spec" | "playbook" | "rules" | "raw">("spec");
+  const [activeView, setActiveView] = useState<"spec" | "playbook" | "rules" | "raw" | "client_spec">("spec");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentPhase, setCurrentPhase] = useState<string>("");
@@ -144,8 +150,11 @@ export function ProductTab({
   useEffect(() => {
     if (!specToLoad) return;
     setSpec(specToLoad);
+    setActiveView("spec");
     setIsGenerating(false);
     setCurrentPhase("");
+    setIsGeneratingClientSpec(false);
+    setClientSpecPhase("");
     setPreflightState("idle");
     setPreflightQuestions([]);
     setPreflightAnswers({});
@@ -274,6 +283,19 @@ export function ProductTab({
   // Use team configured in the left panel
   const effectiveTeam = customTeam && customTeam.length > 0 ? customTeam : DEFAULT_PRODUCT_AGENTS;
 
+  // Picks which teammate plays which role for a generation pass (technical spec or
+  // client-facing spec alike) — the top agent (#1 in the left panel list) is always Lead
+  // Architect & Facilitator; the rest are matched by persona/name keywords, falling back to
+  // team order when nothing matches. Shared by runSpecGeneration and
+  // handleGenerateClientSpec so the two never pick roles inconsistently.
+  const pickAgentRoles = () => {
+    const leadAgent = effectiveTeam[0];
+    const uxAgent = effectiveTeam.find((a, i) => i > 0 && (a.persona.toLowerCase().includes("design") || a.persona.toLowerCase().includes("ux") || a.name.toLowerCase().includes("design"))) || effectiveTeam[1] || leadAgent;
+    const techAgent = effectiveTeam.find((a, i) => i > 0 && (a.persona.toLowerCase().includes("tech") || a.persona.toLowerCase().includes("architect") || a.persona.toLowerCase().includes("system") || a.name.toLowerCase().includes("architect"))) || effectiveTeam[2] || effectiveTeam[1] || leadAgent;
+    const qaAgent = effectiveTeam.find((a, i) => i > 0 && (a.persona.toLowerCase().includes("qa") || a.persona.toLowerCase().includes("vibe") || a.persona.toLowerCase().includes("specialist"))) || effectiveTeam[3] || effectiveTeam[2] || effectiveTeam[1] || leadAgent;
+    return { leadAgent, uxAgent, techAgent, qaAgent };
+  };
+
   const handleCopy = (text: string, type: string) => {
     navigator.clipboard.writeText(text);
     setCopiedType(type);
@@ -333,6 +355,51 @@ export function ProductTab({
       logDebug("info", "Exported spec as PDF");
     } catch (err: any) {
       logDebug("error", "Failed to export spec as PDF", err?.message || err);
+    } finally {
+      setIsExportingFormat(null);
+    }
+  };
+
+  const handleDownloadClientSpec = () => {
+    if (!spec?.clientFacingSpec) return;
+    const md = buildClientFacingSpecMarkdown(spec);
+    downloadFile(`${specFilenameBase()}-client-spec.md`, md);
+  };
+
+  const handleExportClientSpecDocx = async () => {
+    if (!spec?.clientFacingSpec) return;
+    setIsExportingFormat("docx");
+    try {
+      const blob = await buildClientFacingSpecDocx(spec);
+      downloadBinaryFile(`${specFilenameBase()}-client-spec.docx`, blob, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      logDebug("info", "Exported client-facing spec as Word document");
+    } catch (err: any) {
+      logDebug("error", "Failed to export client-facing spec as Word document", err?.message || err);
+    } finally {
+      setIsExportingFormat(null);
+    }
+  };
+
+  const handleExportClientSpecRtf = () => {
+    if (!spec?.clientFacingSpec) return;
+    try {
+      const rtf = buildClientFacingSpecRtf(spec);
+      downloadBinaryFile(`${specFilenameBase()}-client-spec.rtf`, new TextEncoder().encode(rtf), "application/rtf");
+      logDebug("info", "Exported client-facing spec as RTF");
+    } catch (err: any) {
+      logDebug("error", "Failed to export client-facing spec as RTF", err?.message || err);
+    }
+  };
+
+  const handleExportClientSpecPdf = async () => {
+    if (!spec?.clientFacingSpec) return;
+    setIsExportingFormat("pdf");
+    try {
+      const bytes = await buildClientFacingSpecPdf(spec);
+      downloadBinaryFile(`${specFilenameBase()}-client-spec.pdf`, bytes, "application/pdf");
+      logDebug("info", "Exported client-facing spec as PDF");
+    } catch (err: any) {
+      logDebug("error", "Failed to export client-facing spec as PDF", err?.message || err);
     } finally {
       setIsExportingFormat(null);
     }
@@ -644,10 +711,7 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
       const toolInfo = VIBE_CODING_TOOLS.find(t => t.id === selectedTool) || VIBE_CODING_TOOLS[0];
 
       // The top agent (#1 in the left panel list) is designated as the Lead Architect & Facilitator
-      const leadAgent = effectiveTeam[0];
-      const uxAgent = effectiveTeam.find((a, i) => i > 0 && (a.persona.toLowerCase().includes("design") || a.persona.toLowerCase().includes("ux") || a.name.toLowerCase().includes("design"))) || effectiveTeam[1] || leadAgent;
-      const techAgent = effectiveTeam.find((a, i) => i > 0 && (a.persona.toLowerCase().includes("tech") || a.persona.toLowerCase().includes("architect") || a.persona.toLowerCase().includes("system") || a.name.toLowerCase().includes("architect"))) || effectiveTeam[2] || effectiveTeam[1] || leadAgent;
-      const qaAgent = effectiveTeam.find((a, i) => i > 0 && (a.persona.toLowerCase().includes("qa") || a.persona.toLowerCase().includes("vibe") || a.persona.toLowerCase().includes("specialist"))) || effectiveTeam[3] || effectiveTeam[2] || effectiveTeam[1] || leadAgent;
+      const { leadAgent, uxAgent, techAgent, qaAgent } = pickAgentRoles();
 
       // Step 1: Synthesize Title and App Summary (Led by top agent)
       setCurrentPhase(`Formulating Product Vision & Invariants with ${leadAgent.name} (Lead Architect)...`);
@@ -1137,6 +1201,108 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
       setIsGenerating(false);
       setCurrentPhase("");
       abortControllerRef.current = null;
+    }
+  };
+
+  // Client-Facing Product Spec: a non-technical companion document DERIVED from the already
+  // -generated technical spec's own sections (never from a fresh pass over the app idea) —
+  // this is what keeps the two documents in lockstep instead of risking two independent
+  // opinions on the same product. One quick agent call per client-facing section, no
+  // cross-review loop (the consistency guarantee here comes from grounding in the approved
+  // technical content, not from a second review pass).
+  const [isGeneratingClientSpec, setIsGeneratingClientSpec] = useState(false);
+  const [clientSpecPhase, setClientSpecPhase] = useState<string>("");
+
+  const handleGenerateClientSpec = async () => {
+    if (!spec || spec.sections.length === 0 || isGeneratingClientSpec) return;
+    setIsGeneratingClientSpec(true);
+    setClientSpecPhase("Reading the approved technical spec...");
+    try {
+      const { leadAgent, uxAgent, qaAgent } = pickAgentRoles();
+
+      // Everything except the two sections that are pure implementation detail with
+      // nothing to translate for a client audience: a literal file-path listing, and
+      // copy-paste prompts for an AI coding agent. Every other section (including the
+      // technical ones) is still given as SOURCE material — e.g. a data model's stated
+      // constraints often encode a real business rule worth surfacing in plain language —
+      // the instructions below are what keep the output from restating it in tech terms.
+      const TECH_SECTION_CHAR_CAP = 6000;
+      const technicalContext = spec.sections
+        .filter(s => s.key !== "file_manifest" && s.key !== "vibe_playbook")
+        .map(s => `--- ${s.heading} ---\n${s.content.slice(0, TECH_SECTION_CHAR_CAP)}`)
+        .join("\n\n");
+
+      const styleLine = (spec.preflightQuestions || []).find(q => q.isStyleInspiration && q.answer)?.answer;
+
+      const audienceGuardrail = `This document is for a non-technical client/stakeholder audience, derived from the approved technical product spec below — never invent anything that contradicts it, and never introduce new product decisions of your own. Describe ONLY what the product does, why it exists, and how it behaves and looks to a user. Do NOT include or restate: the technology stack, programming languages/frameworks, folder or file structure, code snippets, API endpoint definitions, database/data schemas, or security/deployment implementation details. Where the source material below only expresses something in technical terms, translate it into plain business/user-facing language — never copy the technical wording as-is.`;
+
+      const sourceBlock = `SOURCE — APPROVED TECHNICAL PRODUCT SPEC FOR "${spec.title}":\n${spec.appConcept ? `Concept: ${spec.appConcept}\n\n` : ""}${technicalContext}${styleLine ? `\n\nSTYLE INSPIRATION NOTED DURING THE TECHNICAL SPEC: ${styleLine}` : ""}`;
+
+      const clientSectionConfigs: { key: ClientFacingSpecSection["key"]; heading: string; agent: CustomAgent; instruction: string }[] = [
+        {
+          key: "vision",
+          heading: "1. Product Vision & Purpose",
+          agent: leadAgent,
+          instruction: `You are drafting Section 1 (Product Vision & Purpose) of a client-facing product specification. In clear Markdown, cover: what problem this product solves and for whom, the core value it delivers, and the single most important thing it should do well. Write a short, compelling narrative for a client/stakeholder in plain language — not a bullet-point dump.\n${audienceGuardrail}`,
+        },
+        {
+          key: "personas_stories",
+          heading: "2. User Personas & User Stories",
+          agent: uxAgent,
+          instruction: `You are drafting Section 2 (User Personas & User Stories). Describe each primary user persona in plain terms (who they are, what they need), then list concrete user stories formatted as "As a [persona], I want to [do something] so that [benefit]." Group stories by persona or by feature area, whichever reads more clearly.\n${audienceGuardrail}`,
+        },
+        {
+          key: "feature_scope",
+          heading: "3. Feature Scope",
+          agent: leadAgent,
+          instruction: `You are drafting Section 3 (Feature Scope). List, in plain language, what IS included in this version of the product (in scope) and what is explicitly NOT included (out of scope / a later phase), as two clearly labeled lists. Describe only what each feature does for the user, never how it's implemented.\n${audienceGuardrail}`,
+        },
+        {
+          key: "style_inspiration",
+          heading: "4. Style Inspiration & Design Direction",
+          agent: uxAgent,
+          instruction: `You are drafting Section 4 (Style Inspiration & Design Direction). Summarize the intended visual/design direction (mood, tone, color and typography feel, overall aesthetic) in plain language a client can react to. If a style inspiration reference was noted in the source material, explicitly reference it and describe how it informed the direction; if none was provided, describe the design direction the team settled on. Do not mention specific UI component libraries, CSS frameworks, or code.\n${audienceGuardrail}`,
+        },
+        {
+          key: "user_journeys",
+          heading: "5. User Journeys & Experience",
+          agent: uxAgent,
+          instruction: `You are drafting Section 5 (User Journeys & Experience). Walk through the key screens and flows a user experiences, from first use through the core recurring loop, describing what the user sees and does at each step and why it matters to them. Describe layout and interaction at a visual/experiential level (e.g. "a simple card-based list with a prominent add button") — never technical component names, state management, or code.\n${audienceGuardrail}`,
+        },
+        {
+          key: "business_logic",
+          heading: "6. Business Logic & Rules",
+          agent: leadAgent,
+          instruction: `You are drafting Section 6 (Business Logic & Rules). List the important business rules and behaviors that govern how the product works from a user/business standpoint — e.g. limits, permissions, what triggers what, plan/pricing rules, validation a user would notice. Phrase every rule in plain business language (e.g. "A free account may create up to 3 projects"), never as a data constraint, schema field, or code condition.\n${audienceGuardrail}`,
+        },
+        {
+          key: "acceptance_criteria",
+          heading: "7. Acceptance Criteria",
+          agent: qaAgent,
+          instruction: `You are drafting Section 7 (Acceptance Criteria). For the product's major features/user stories, write concrete, testable acceptance criteria a client could use to confirm a feature is "done" — a plain checklist or Given/When/Then format, framed entirely around observable user-facing behavior (what happens on screen, what the user can or can't do), never around code, APIs, or data.\n${audienceGuardrail}`,
+        },
+      ];
+
+      const draftedSections: ClientFacingSpecSection[] = [];
+      for (let i = 0; i < clientSectionConfigs.length; i++) {
+        const cfg = clientSectionConfigs[i];
+        setClientSpecPhase(`Drafting ${cfg.heading} with ${cfg.agent.name}... (${i + 1}/${clientSectionConfigs.length})`);
+        const priorSections = draftedSections.length > 0
+          ? `\n\nALREADY DRAFTED CLIENT-FACING SECTIONS (for consistency — don't repeat their content):\n${draftedSections.map(s => `[${s.heading}]\n${s.content.slice(0, 800)}`).join("\n\n")}`
+          : "";
+        const content = await callAgent(cfg.agent, `${sourceBlock}${priorSections}`, cfg.instruction);
+        draftedSections.push({ id: `csec_${Date.now()}_${i}`, key: cfg.key, heading: cfg.heading, content: content.trim() });
+        // Live progress, same idea as pushLiveSpec above — each section appears as it finishes.
+        setSpec(prev => (prev ? { ...prev, clientFacingSpec: { generatedAt: new Date().toISOString(), sections: [...draftedSections] } } : prev));
+      }
+
+      setActiveView("client_spec");
+      logDebug("info", `Generated client-facing spec (${draftedSections.length} sections) from the approved technical spec`);
+    } catch (err: any) {
+      logDebug("error", "Failed to generate client-facing spec", err?.message || err);
+    } finally {
+      setIsGeneratingClientSpec(false);
+      setClientSpecPhase("");
     }
   };
 
@@ -1861,7 +2027,28 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleGenerateClientSpec}
+                disabled={isGeneratingClientSpec || isGenerating}
+                className="text-xs h-8 gap-1.5 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20"
+                title="Derives a non-technical, client-facing version of this spec — user stories, UI/UX, scope, acceptance criteria — with no implementation detail."
+              >
+                {isGeneratingClientSpec ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                {isGeneratingClientSpec
+                  ? "Drafting Client Spec..."
+                  : spec.clientFacingSpec
+                  ? "Regenerate Client-Facing Spec"
+                  : "Generate Client-Facing Spec"}
+              </Button>
             </div>
+            {isGeneratingClientSpec && clientSpecPhase && (
+              <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                <RefreshCw className="w-3 h-3 animate-spin" /> {clientSpecPhase}
+              </p>
+            )}
           </div>
 
           {/* Readiness Summary — one glance at whether this is actually ready to hand off,
@@ -2065,6 +2252,18 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
               >
                 <FileText className="w-3.5 h-3.5" /> Raw Markdown
               </button>
+              {spec.clientFacingSpec && spec.clientFacingSpec.sections.length > 0 && (
+                <button
+                  onClick={() => setActiveView("client_spec")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    activeView === "client_spec"
+                      ? "bg-card text-emerald-600 dark:text-emerald-400 shadow-sm font-semibold"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Client-Facing Spec ({spec.clientFacingSpec.sections.length})
+                </button>
+              )}
             </div>
 
             {/* Category Filter Pills (When in Structured Spec View) */}
@@ -2318,6 +2517,64 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {/* VIEW 5: CLIENT-FACING SPEC — a non-technical companion document derived from
+              the sections above (see handleGenerateClientSpec); no "Drafted by" bylines or
+              Refine/History controls here, since it's a quick derived pass, not an
+              independently-reviewed document. */}
+          {activeView === "client_spec" && spec.clientFacingSpec && (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-emerald-950/10">
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                  Derived from the structured spec above — for client/stakeholder review. Excludes tech stack, data schemas, APIs, file structure, and deployment detail.
+                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button size="sm" variant="outline" onClick={() => handleCopy(buildClientFacingSpecMarkdown(spec), "client_spec")} className="text-xs h-8 gap-1.5">
+                    {copiedType === "client_spec" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedType === "client_spec" ? "Copied!" : "Copy Markdown"}
+                  </Button>
+                  <Button size="sm" onClick={handleDownloadClientSpec} className="text-xs h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white">
+                    <Download className="w-3.5 h-3.5" /> Download .md
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger render={
+                      <Button size="sm" variant="outline" disabled={isExportingFormat !== null} className="text-xs h-8 gap-1.5">
+                        {isExportingFormat ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+                        {isExportingFormat ? `Exporting ${isExportingFormat}...` : "Export As..."}
+                      </Button>
+                    } />
+                    <DropdownMenuContent align="end" className="w-64">
+                      <DropdownMenuItem onClick={handleExportClientSpecDocx} className="text-xs flex flex-col items-start gap-0.5 cursor-pointer py-2">
+                        <span className="flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-blue-500" /> Word Document (.docx)</span>
+                        <span className="text-xs text-slate-400 pl-5">Editable in Microsoft Word or LibreOffice</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleExportClientSpecRtf} className="text-xs flex flex-col items-start gap-0.5 cursor-pointer py-2">
+                        <span className="flex items-center gap-2"><FileCode2 className="w-3.5 h-3.5 text-slate-500" /> Rich Text (.rtf)</span>
+                        <span className="text-xs text-slate-400 pl-5">Opens in nearly any word processor</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleExportClientSpecPdf} className="text-xs flex flex-col items-start gap-0.5 cursor-pointer py-2">
+                        <span className="flex items-center gap-2"><FileDown className="w-3.5 h-3.5 text-red-500" /> PDF</span>
+                        <span className="text-xs text-slate-400 pl-5">Fixed-layout, ready to share or print</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+
+              {spec.clientFacingSpec.sections.map(sec => (
+                <Card key={sec.id} className="shadow-md border-slate-200 dark:border-slate-800">
+                  <CardHeader className="pb-3 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40">
+                    <CardTitle className="text-sm font-bold text-slate-900 dark:text-slate-100">{sec.heading}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-6">
+                    <div className="prose dark:prose-invert max-w-none text-xs sm:text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-sans">
+                      {sec.content}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           )}
 
           {/* Follow-up / Team Consultation Card */}

@@ -26,7 +26,7 @@ import { VIBE_CODING_TOOLS } from "./productSpecTypes";
 // Shared brand style — one source of truth for all three renderers
 // ---------------------------------------------------------------------------
 
-const BRAND = {
+export const BRAND = {
   navy: "003865", // headings, title, table header fill, bold inline lead-ins
   blue: "0063A3", // subtitle, H2, header brand text, rule under H1
   gray: "464B52", // body text, H3
@@ -38,7 +38,7 @@ const BRAND = {
   labelFill: "EAF2FA", // table first-column fill
 };
 
-function hexToRgb01(hex: string): [number, number, number] {
+export function hexToRgb01(hex: string): [number, number, number] {
   const n = parseInt(hex, 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
@@ -169,7 +169,7 @@ export function parseMarkdownLiteBlocks(content: string): MarkdownBlock[] {
 
 /** Splits "some **bold** text" into plain/bold segments for renderers that support
  *  inline run-level formatting (DOCX and PDF; RTF uses the plain-text fallback below). */
-function splitBoldSegments(text: string): { text: string; bold: boolean }[] {
+export function splitBoldSegments(text: string): { text: string; bold: boolean }[] {
   const segments: { text: string; bold: boolean }[] = [];
   const re = /\*\*(.+?)\*\*/g;
   let lastIndex = 0;
@@ -185,7 +185,7 @@ function splitBoldSegments(text: string): { text: string; bold: boolean }[] {
 
 /** For renderers with no inline formatting (RTF's plain-text fallback) — just drop the **
  *  markers rather than printing them literally. */
-function stripBoldMarkers(text: string): string {
+export function stripBoldMarkers(text: string): string {
   return text.replace(/\*\*(.+?)\*\*/g, "$1");
 }
 
@@ -472,12 +472,12 @@ export async function buildProductSpecDocx(spec: ProductSpec): Promise<Blob> {
 
 // Fixed color table index → BRAND color, referenced via \cfN below. Index 0 is left as
 // black/auto per RTF convention (readers treat an unset \cf as index 0).
-const RTF_COLOR_TABLE = [BRAND.navy, BRAND.blue, BRAND.gray, BRAND.muted, BRAND.faint, BRAND.accent, BRAND.tableBorder, BRAND.ruleLight];
-const RTF_CF = {
+export const RTF_COLOR_TABLE = [BRAND.navy, BRAND.blue, BRAND.gray, BRAND.muted, BRAND.faint, BRAND.accent, BRAND.tableBorder, BRAND.ruleLight];
+export const RTF_CF = {
   navy: 1, blue: 2, gray: 3, muted: 4, faint: 5, accent: 6, tableBorder: 7, ruleLight: 8,
 };
 
-function escapeRtf(text: string): string {
+export function escapeRtf(text: string): string {
   return text
     .replace(/\\/g, "\\\\")
     .replace(/\{/g, "\\{")
@@ -493,7 +493,7 @@ function escapeRtf(text: string): string {
  *  Cell shading is deliberately skipped — RTF `\clshdng`/`\clcbpat` support is inconsistent
  *  outside Word, and a bold header row reads clearly without it. Column widths are equal,
  *  matching the DOCX renderer's simplification for arbitrary agent-generated tables. */
-function buildRtfTable(rows: string[][]): string {
+export function buildRtfTable(rows: string[][]): string {
   const [headerRow, ...bodyRows] = rows;
   const colCount = headerRow.length;
   const totalTwips = 9360; // matches the RTF page width minus margins used below
@@ -610,7 +610,7 @@ const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 const CONTENT_TOP = PAGE_HEIGHT - MARGIN - HEADER_H;
 const CONTENT_BOTTOM = MARGIN + FOOTER_H;
 
-function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
+export function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";

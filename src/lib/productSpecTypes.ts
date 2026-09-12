@@ -160,6 +160,36 @@ export function wouldExceedHistoryStorageLimits(spec: ProductSpec): boolean {
   return capSpecForHistoryStorage(spec).wasTrimmed;
 }
 
+// A section of the Client-Facing Product Spec — see ClientFacingSpec below.
+export interface ClientFacingSpecSection {
+  id: string;
+  key:
+    | "vision"
+    | "personas_stories"
+    | "feature_scope"
+    | "style_inspiration"
+    | "user_journeys"
+    | "business_logic"
+    | "acceptance_criteria"
+    | string;
+  heading: string;
+  content: string;
+}
+
+// A non-technical companion document derived FROM an already-generated ProductSpec (never
+// from a fresh, independent pass over the app idea) — see handleGenerateClientSpec in
+// ProductTab. Deriving it from the approved technical spec's own section content, rather
+// than re-asking the app idea from scratch, is what keeps the two documents in lockstep:
+// there's only ever one source of truth about what the product actually is.
+// Deliberately covers what the product does, why, and how it behaves/looks to a user —
+// personas, user stories, UI/UX, style inspiration, feature scope, business rules, and
+// acceptance criteria. Deliberately excludes implementation detail: tech stack, data
+// schemas, API contracts, file/folder structure, code, deployment, or security internals.
+export interface ClientFacingSpec {
+  generatedAt: string;
+  sections: ClientFacingSpecSection[];
+}
+
 export interface ProductSpecGroundedSource {
   name: string;
   sourceType: string;
@@ -204,6 +234,12 @@ export interface ProductSpec {
   // Notes from the final cross-section consistency sweep (see handleGenerateSpec) that
   // didn't require touching any section — e.g. a contradiction the team judged minor.
   consistencyNotes?: string[];
+  // A non-technical companion spec, derived from this document's own sections (see
+  // handleGenerateClientSpec) — for a client/stakeholder audience rather than a build agent.
+  // Optional and generated on demand, well after the technical spec itself is done; kept as
+  // a field on the SAME ProductSpec (rather than a separate history entry) so the two can
+  // never drift apart or end up orphaned from one another.
+  clientFacingSpec?: ClientFacingSpec;
 }
 
 export const VIBE_CODING_TOOLS: VibeCodingToolInfo[] = [

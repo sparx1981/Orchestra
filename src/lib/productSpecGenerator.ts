@@ -39,6 +39,40 @@ export function buildProductSpecMarkdown(spec: ProductSpec): string {
 }
 
 /**
+ * Formats the Client-Facing Product Spec (see handleGenerateClientSpec / ClientFacingSpec)
+ * into Markdown. Mirrors buildProductSpecMarkdown's shape but has no "Authored by" bylines
+ * or target-tool/grounding metadata — this document is meant for a client/stakeholder
+ * audience, not an AI coding agent, so those specifics would just be noise.
+ */
+export function buildClientFacingSpecMarkdown(spec: ProductSpec): string {
+  const clientSpec = spec.clientFacingSpec;
+  const lines: string[] = [];
+
+  lines.push(`# ${spec.title} — Client-Facing Product Specification`);
+  if (spec.subtitle) {
+    lines.push(`> ${spec.subtitle}`);
+  }
+  lines.push("");
+  if (clientSpec?.generatedAt) {
+    lines.push(`- **Prepared:** ${new Date(clientSpec.generatedAt).toLocaleDateString()}`);
+  }
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  for (const section of clientSpec?.sections || []) {
+    lines.push(`## ${section.heading}`);
+    lines.push("");
+    lines.push(section.content.trim());
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Formats a ready-to-copy Prompt Playbook specifically tailored for feeding into
  * Cursor Composer, Claude Code, Lovable, or v0.
  */
