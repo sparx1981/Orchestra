@@ -14,8 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckCircle2, RefreshCw, ShieldAlert, Sparkles } from "lucide-react";
 import { fetchPublicIntakeForm, submitPublicIntake } from "@/src/lib/briefBridgeService";
-import type { BudgetTier, CustomFieldResponse, PublicIntakeFormConfig, TargetLaunchTimeframe } from "@/src/types/briefBridge";
-import { BUDGET_TIER_LABELS, TARGET_LAUNCH_LABELS, isCustomFileAnswer } from "@/src/types/briefBridge";
+import type { CustomFieldResponse, PublicIntakeFormConfig } from "@/src/types/briefBridge";
+import { isCustomFileAnswer } from "@/src/types/briefBridge";
 
 type LoadState = "loading" | "not_found" | "ready";
 
@@ -44,10 +44,6 @@ export function PublicIntakePortal({ token }: { token: string }) {
   const [clientEmail, setClientEmail] = useState("");
   const [clientCompany, setClientCompany] = useState("");
   const [projectTitle, setProjectTitle] = useState("");
-  const [projectDescription, setProjectDescription] = useState("");
-  const [budgetTier, setBudgetTier] = useState<BudgetTier>("undisclosed");
-  const [targetLaunch, setTargetLaunch] = useState<TargetLaunchTimeframe>("flexible");
-  const [techPreferencesRaw, setTechPreferencesRaw] = useState("");
   const [assetLinksRaw, setAssetLinksRaw] = useState("");
   const [customAnswers, setCustomAnswers] = useState<Record<string, CustomFieldResponse>>({});
   // Per-question error for "file"-type answers (too large, or failed to read) — kept
@@ -92,14 +88,14 @@ export function PublicIntakePortal({ token }: { token: string }) {
 
   const missingRequired = useMemo(() => {
     if (!form) return true;
-    if (!clientFirstName.trim() || !clientEmail.trim() || !projectTitle.trim() || !projectDescription.trim()) return true;
+    if (!clientFirstName.trim() || !clientEmail.trim() || !projectTitle.trim()) return true;
     for (const q of form.customQuestions) {
       if (!q.required) continue;
       const val = customAnswers[q.id];
       if (val === undefined || val === "" || (Array.isArray(val) && val.length === 0)) return true;
     }
     return false;
-  }, [form, clientFirstName, clientEmail, projectTitle, projectDescription, customAnswers]);
+  }, [form, clientFirstName, clientEmail, projectTitle, customAnswers]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -113,10 +109,16 @@ export function PublicIntakePortal({ token }: { token: string }) {
         clientEmail: clientEmail.trim().toLowerCase(),
         clientCompany: clientCompany.trim() || undefined,
         projectTitle: projectTitle.trim(),
-        projectDescription: projectDescription.trim(),
-        budgetTier,
-        targetLaunch,
-        techPreferences: techPreferencesRaw.split(",").map(s => s.trim()).filter(Boolean),
+        // Target launch, budget range, tech preferences, and a free-text project
+        // description are no longer asked on the form (the structured custom questions —
+        // core problem, feature requirements, MVP scope, etc. — cover that ground instead).
+        // These fields still exist on Enquiry/PublicIntakeSubmission for older submissions
+        // and downstream code that reads them, so fixed neutral defaults are submitted
+        // rather than removing the fields outright.
+        projectDescription: "",
+        budgetTier: "undisclosed",
+        targetLaunch: "flexible",
+        techPreferences: [],
         assetLinks: assetLinksRaw.split("\n").map(s => s.trim()).filter(Boolean),
         customAnswers,
         _gotcha: gotcha || undefined,
@@ -206,49 +208,6 @@ export function PublicIntakePortal({ token }: { token: string }) {
           <div className="space-y-1.5">
             <Label htmlFor="projectTitle">Project name *</Label>
             <Input id="projectTitle" required value={projectTitle} onChange={e => setProjectTitle(e.target.value)} maxLength={200} />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="projectDescription">What are you looking to build? *</Label>
-            <Textarea
-              id="projectDescription"
-              required
-              rows={6}
-              value={projectDescription}
-              onChange={e => setProjectDescription(e.target.value)}
-              maxLength={6000}
-              placeholder="Describe the product, who it's for, and what it needs to do..."
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Target launch</Label>
-              <Select value={targetLaunch} onValueChange={v => setTargetLaunch(v as TargetLaunchTimeframe)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(TARGET_LAUNCH_LABELS) as TargetLaunchTimeframe[]).map(k => (
-                    <SelectItem key={k} value={k}>{TARGET_LAUNCH_LABELS[k]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Budget range</Label>
-              <Select value={budgetTier} onValueChange={v => setBudgetTier(v as BudgetTier)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(BUDGET_TIER_LABELS) as BudgetTier[]).map(k => (
-                    <SelectItem key={k} value={k}>{BUDGET_TIER_LABELS[k]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="techPreferences">Technology preferences (optional, comma-separated)</Label>
-            <Input id="techPreferences" value={techPreferencesRaw} onChange={e => setTechPreferencesRaw(e.target.value)} placeholder="React, Postgres, Stripe..." />
           </div>
 
           <div className="space-y-1.5">

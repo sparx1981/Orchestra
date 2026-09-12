@@ -185,14 +185,13 @@ export const DEFAULT_INTAKE_QUESTIONS: CustomQuestion[] = [
   {
     id: "roles_permissions",
     label: "What types of roles/permissions are needed?",
-    description: "e.g., Simple single-user, multi-tenant with admin/member tiers, or public/no login needed.",
+    description: "e.g., Simple single-user, multi-user with admin/member tiers, or public/no login needed.",
     type: "text",
     required: false,
   },
   {
     id: "day_one_mvp",
     label: "If the app could only do one thing well on day one, what is it?",
-    description: "Identifies the true MVP feature vs. nice-to-haves.",
     type: "textarea",
     required: false,
   },
