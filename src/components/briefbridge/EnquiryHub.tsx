@@ -18,6 +18,7 @@ import { deleteEnquiry, saveIntakeConfig, subscribeEnquiries, subscribeIntakeCon
 import { defaultIntakeFormConfig } from "@/src/types/briefBridge";
 import type { Enquiry, EnquiryStatus, IntakeFormConfig } from "@/src/types/briefBridge";
 import { ENQUIRY_STATUS_LABELS } from "@/src/types/briefBridge";
+import type { CustomAgent } from "@/src/App";
 
 function generateToken(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -26,9 +27,13 @@ function generateToken(): string {
 interface EnquiryHubProps {
   userId: string;
   onPipeToPrompt: (prompt: string) => void;
+  // Used by the drawer's "Pipe to Prompt" section to have an agent turn the enquiry's
+  // Q&A into a single, well-structured Product tab prompt — see EnquiryDetailDrawer.
+  productTeam: CustomAgent[];
+  callAgent: (agent: CustomAgent, userContent: string, systemInstruction: string, signal?: AbortSignal) => Promise<string>;
 }
 
-export function EnquiryHub({ userId, onPipeToPrompt }: EnquiryHubProps) {
+export function EnquiryHub({ userId, onPipeToPrompt, productTeam, callAgent }: EnquiryHubProps) {
   const [config, setConfig] = useState<IntakeFormConfig | null>(null);
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [search, setSearch] = useState("");
@@ -174,6 +179,8 @@ export function EnquiryHub({ userId, onPipeToPrompt }: EnquiryHubProps) {
         enquiry={openEnquiry}
         config={config}
         userId={userId}
+        productTeam={productTeam}
+        callAgent={callAgent}
         onClose={() => setOpenEnquiry(null)}
         onPipeToPrompt={prompt => {
           onPipeToPrompt(prompt);

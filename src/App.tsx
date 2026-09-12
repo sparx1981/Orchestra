@@ -13300,7 +13300,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                 </div>
               ) : activeTab === "enquiries" ? (
                 /* Enquiries Tab (BriefBridge) */
-                user && <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} />
+                user && <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} productTeam={productTeam} callAgent={callAgent} />
               ) : (
                 /* History Tab */
                 <div className="space-y-6 animate-in fade-in duration-300">
