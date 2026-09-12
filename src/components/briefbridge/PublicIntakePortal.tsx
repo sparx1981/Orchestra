@@ -20,11 +20,16 @@ import { isCustomFileAnswer } from "@/src/types/briefBridge";
 type LoadState = "loading" | "not_found" | "ready";
 
 // Keeps a "file"-type custom answer small enough to leave real headroom under Firestore's
-// 1MB-per-document cap once base64-encoded (~33% inflation) alongside everything else on
-// the enquiry (project description, other custom answers, etc.) — same reasoning as
-// MAX_IMAGE_BYTES in App.tsx, just a bit smaller since an enquiry doc has more going on
-// than a single knowledge-base file does.
-const MAX_CUSTOM_FILE_BYTES = 700 * 1024;
+// 1,048,576-byte (1MiB) per-document cap once base64-encoded — encoding alone inflates size
+// by ~33%, so the previous 700KB cap (~933KB encoded) left almost no room for the rest of
+// the document (every other field, plus Firestore's own per-field overhead) and could fail
+// the submission outright with no useful error. 300KB raw (~400KB encoded) leaves well over
+// half the document budget for everything else, at the cost of rejecting larger uploads —
+// acceptable for what this is actually used for (a logo/brand-asset attachment, not a
+// general file store). If more than one "file" question is ever added to a form, their caps
+// stack, so a form with several file questions could still approach the limit; not handled
+// here since a single generous default question is the only case this needs to cover today.
+const MAX_CUSTOM_FILE_BYTES = 300 * 1024;
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -123,8 +128,17 @@ export function PublicIntakePortal({ token }: { token: string }) {
         _gotcha: gotcha || undefined,
       });
       setSubmitted(true);
-    } catch {
-      setError("Something went wrong submitting your brief. Please try again in a moment.");
+    } catch (err: any) {
+      // Logged for whoever's debugging this (dev tools console) — the client-facing
+      // message stays generic (no Firestore internals), but includes whatever detail is
+      // actually safe/useful (e.g. Firestore's own error code) rather than nothing at all.
+      console.error("BriefBridge intake submission failed:", err);
+      const detail = err?.code || err?.message;
+      setError(
+        detail
+          ? `Something went wrong submitting your brief (${detail}). Please try again in a moment.`
+          : "Something went wrong submitting your brief. Please try again in a moment."
+      );
     } finally {
       setSubmitting(false);
     }
