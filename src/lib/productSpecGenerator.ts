@@ -62,12 +62,52 @@ export function buildDesignReviewMarkdown(spec: ProductSpec): string {
   return lines.join("\n");
 }
 
+/** Renders spec.qualityReview (Automated Specification Quality Pass) as Markdown body
+ *  content — same no-own-heading convention as buildDesignSystemMarkdown/buildDesignReviewMarkdown
+ *  above. See specQualityPrompt.ts for how this result is produced. */
+export function buildSpecQualityMarkdown(spec: ProductSpec): string {
+  const review = spec.qualityReview;
+  if (!review) return "";
+  const lines: string[] = [];
+  lines.push(`| Dimension | Score | Justification |`);
+  lines.push(`| --- | --- | --- |`);
+  const dims: { key: keyof typeof review.scores; label: string }[] = [
+    { key: "ai_likeness", label: "AI-Likeness" },
+    { key: "requirement_clarity", label: "Requirement Clarity" },
+    { key: "testability", label: "Testability" },
+    { key: "completeness", label: "Completeness" },
+  ];
+  dims.forEach(d => lines.push(`| ${d.label} | ${review.scores[d.key]}/10 | ${review.score_justifications[d.key].replace(/\|/g, "/")} |`));
+  lines.push("");
+  lines.push(`**Gate Status:** ${review.gate_status === "pass" ? "Pass" : "Needs Revision"}`);
+  lines.push("");
+  if (review.hollow_spec_flag) {
+    lines.push(`> **Hollow-spec warning:** this document reads as polished prose but scored low on testability and/or completeness — an engineer may not have enough here to build from.`);
+    lines.push("");
+  }
+  if (review.top_changes.length > 0) {
+    lines.push(`### Top Changes`);
+    review.top_changes.forEach((c, i) => lines.push(`${i + 1}. ${c}`));
+    lines.push("");
+  }
+  if (review.structural_flags.length > 0) {
+    lines.push(`### Structural Flags`);
+    review.structural_flags.forEach(f => lines.push(`- **${f.pattern}:** "${f.quote}" — ${f.suggestion}`));
+    lines.push("");
+  }
+  if (review.anti_pattern_flags.length > 0) {
+    lines.push(`### Anti-Pattern Flags`);
+    review.anti_pattern_flags.forEach(f => lines.push(`- **[${f.pattern_id}]:** "${f.quote}" — ${f.suggestion}`));
+  }
+  return lines.join("\n");
+}
+
 /**
- * Appendix sections synthesized from spec.designSystem/designReview, shaped exactly like a
- * ProductSpecSection so every export builder (Markdown here, and docx/rtf/pdf in
- * productSpecExport.ts) can render them through the SAME per-section rendering path used for
- * every other section, rather than a bespoke one-off renderer per format. Neither is a real
- * persisted ProductSpecSection — they're never added to spec.sections itself.
+ * Appendix sections synthesized from spec.designSystem/designReview/qualityReview, shaped
+ * exactly like a ProductSpecSection so every export builder (Markdown here, and docx/rtf/pdf
+ * in productSpecExport.ts) can render them through the SAME per-section rendering path used
+ * for every other section, rather than a bespoke one-off renderer per format. None of these
+ * are real persisted ProductSpecSections — they're never added to spec.sections itself.
  */
 export function getDesignAppendixSections(spec: ProductSpec): Pick<ProductSpecSection, "id" | "heading" | "authorAgentName" | "reviewedByAgentName" | "content">[] {
   const sections: Pick<ProductSpecSection, "id" | "heading" | "authorAgentName" | "reviewedByAgentName" | "content">[] = [];
@@ -85,6 +125,14 @@ export function getDesignAppendixSections(spec: ProductSpec): Pick<ProductSpecSe
       heading: "Design & UX Review",
       authorAgentName: "Craft Review Agent",
       content: buildDesignReviewMarkdown(spec),
+    });
+  }
+  if (spec.qualityReview) {
+    sections.push({
+      id: "appendix_spec_quality",
+      heading: "Specification Quality Review",
+      authorAgentName: "Specification Quality Pass",
+      content: buildSpecQualityMarkdown(spec),
     });
   }
   return sections;

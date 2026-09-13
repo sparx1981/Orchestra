@@ -101,6 +101,7 @@ import {
   PenLine,
   Atom,
   Inbox,
+  Gauge,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -220,6 +221,7 @@ import { ProductTab } from "@/src/components/product/ProductTab";
 import { DEFAULT_PRODUCT_AGENTS } from "@/src/lib/productSpecTypes";
 import type { ProductSpec } from "@/src/lib/productSpecTypes";
 import { wouldExceedHistoryStorageLimits, capSpecForHistoryStorage, SAFE_HISTORY_DOC_BUDGET_CHARS } from "@/src/lib/productSpecTypes";
+import { DEFAULT_SQP_THRESHOLDS, DEFAULT_SQP_PATTERN_LIBRARY, type SqpThresholdConfig, type PatternLibrary, type PatternEntry, type PatternCategory, type PatternMatchType, type PatternSeverity, type ChangelogEntry } from "@/src/lib/specQualityTypes";
 import { isLikelyTextSourceFile, prioritizeCodebasePaths, buildCodebaseDigest, type CodebaseFileEntry } from "@/src/lib/codebaseIngest";
 import { buildProductSpecDocx } from "@/src/lib/productSpecExport";
 import { EnquiryHub } from "@/src/components/briefbridge/EnquiryHub";
@@ -1628,6 +1630,18 @@ export default function App() {
   const [editorBlacklist, setEditorBlacklist] = useState("");
   const [editorRestructuring, setEditorRestructuring] = useState<"moderate" | "minimal">("moderate");
   const [editorPrompt, setEditorPrompt] = useState(DEFAULT_EDITOR_PROMPT);
+  // Automated Specification Quality Pass (Settings → Editor → Specification Quality Pass) —
+  // a DIFFERENT feature from the Output Editor above: SQP reviews the technical Product Spec
+  // for generic AI-texture and spec-writing weaknesses (see specQualityPrompt.ts), not team
+  // chat output. Defaults to the bundled seed library/thresholds until a user's own edited
+  // copy loads from Firestore (see the settings onSnapshot handler below).
+  const [sqpThresholds, setSqpThresholds] = useState<SqpThresholdConfig>(DEFAULT_SQP_THRESHOLDS);
+  const [sqpPatternLibrary, setSqpPatternLibrary] = useState<PatternLibrary>(DEFAULT_SQP_PATTERN_LIBRARY);
+  // SQP pattern library editor (Settings → Editor → Specification Quality Pass): null when
+  // the add/edit form is closed, "new" while adding, or the id of the entry being edited.
+  const [sqpEditingEntryId, setSqpEditingEntryId] = useState<string | null>(null);
+  const [sqpEntryDraft, setSqpEntryDraft] = useState<Partial<PatternEntry>>({});
+  const [sqpFormError, setSqpFormError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // Whether the server has KEYS_ENCRYPTION_SECRET configured — previously only ever logged to
   // the (developer-facing, rarely-opened) debug panel; now also surfaced directly in Settings
@@ -2578,6 +2592,11 @@ export default function App() {
           if (es.restructuring !== undefined) setEditorRestructuring(es.restructuring);
           if (es.prompt !== undefined) setEditorPrompt(es.prompt);
         }
+        if (data.sqpSettings) {
+          const sqp = data.sqpSettings;
+          if (sqp.thresholds) setSqpThresholds((prev) => ({ ...prev, ...sqp.thresholds }));
+          if (sqp.library && Array.isArray(sqp.library.entries)) setSqpPatternLibrary(sqp.library);
+        }
         // First-run coach-mark tour: features kept shipping ahead of discoverability
         // across multiple rounds of testing (Go Deeper, the calculator, Expand My Prompt
         // all independently reported as "good but I didn't find it"). Shown once
@@ -2773,6 +2792,155 @@ export default function App() {
       logDebug("error", "Failed to save Output Editor settings", error?.message || error);
     }
   }, [user]);
+
+  // Persists SQP thresholds (Settings → Editor → Specification Quality Pass), same doc/pattern
+  // as saveEditorSettings above but a separate function/field since the two features change
+  // independently. The pattern library itself is saved separately (see saveSqpPatternLibrary)
+  // since it's edited through a different flow (add/edit/delete an entry) with its own
+  // changelog bookkeeping, not a simple on-blur field save.
+  const saveSqpThresholds = useCallback(async (thresholds: SqpThresholdConfig) => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, "users", user.uid, "settings", "private");
+      await setDoc(docRef, cleanUndefined({
+        sqpSettings: { thresholds },
+        updatedAt: serverTimestamp()
+      }), { merge: true });
+    } catch (error: any) {
+      console.error("Error saving SQP thresholds:", error);
+      logDebug("error", "Failed to save Specification Quality Pass thresholds", error?.message || error);
+    }
+  }, [user]);
+
+  // Persists the SQP pattern library (Settings → Editor → Specification Quality Pass). The
+  // very first save for a user writes the bundled seed (DEFAULT_SQP_PATTERN_LIBRARY) plus
+  // whatever they just changed — Firestore has no prior copy to merge against for this field
+  // until then, so the caller always passes the FULL library object (never a partial).
+  const saveSqpPatternLibrary = useCallback(async (library: PatternLibrary) => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, "users", user.uid, "settings", "private");
+      await setDoc(docRef, cleanUndefined({
+        sqpSettings: { library },
+        updatedAt: serverTimestamp()
+      }), { merge: true });
+    } catch (error: any) {
+      console.error("Error saving SQP pattern library:", error);
+      logDebug("error", "Failed to save Specification Quality Pass pattern library", error?.message || error);
+    }
+  }, [user]);
+
+  // Bumps the pattern library's patch version on every add/edit/delete — a lightweight
+  // version trail, not semver-meaningful, just enough that the changelog's version column
+  // means something.
+  const bumpSqpLibraryVersion = (version: string): string => {
+    const parts = version.split(".").map(n => parseInt(n, 10) || 0);
+    while (parts.length < 3) parts.push(0);
+    parts[2] += 1;
+    return parts.join(".");
+  };
+
+  const openSqpAddEntryForm = () => {
+    setSqpEditingEntryId("new");
+    setSqpEntryDraft({ category: "spec-anti-pattern", scope: "spec-specific", match_type: "llm_judgment", severity: "medium" });
+    setSqpFormError(null);
+  };
+
+  const openSqpEditEntryForm = (entry: PatternEntry) => {
+    setSqpEditingEntryId(entry.id);
+    setSqpEntryDraft({ ...entry });
+    setSqpFormError(null);
+  };
+
+  const closeSqpEntryForm = () => {
+    setSqpEditingEntryId(null);
+    setSqpEntryDraft({});
+    setSqpFormError(null);
+  };
+
+  // Enforces the feature's non-negotiable rule in the UI itself, not just as a comment: no
+  // entry is accepted without a concrete example/description AND a suggested fix.
+  const validateSqpEntryDraft = (draft: Partial<PatternEntry>): string | null => {
+    if (!draft.category) return "Category is required.";
+    if (!draft.match_type) return "Match type is required.";
+    if (!draft.suggested_fix || !draft.suggested_fix.trim()) return "A suggested fix is required.";
+    const hasExampleOrDescription = (draft.description && draft.description.trim()) || (draft.example && draft.example.trim());
+    if (!hasExampleOrDescription) return "A concrete example or description is required.";
+    if (draft.match_type !== "llm_judgment" && (!draft.terms || draft.terms.length === 0)) {
+      return "At least one literal term or regex pattern is required for this match type.";
+    }
+    if (draft.match_type === "regex") {
+      for (const t of draft.terms || []) {
+        try {
+          new RegExp(t);
+        } catch {
+          return `"${t}" is not a valid regular expression.`;
+        }
+      }
+    }
+    return null;
+  };
+
+  const saveSqpEntry = () => {
+    const error = validateSqpEntryDraft(sqpEntryDraft);
+    if (error) {
+      setSqpFormError(error);
+      return;
+    }
+    const isNew = sqpEditingEntryId === "new";
+    const now = new Date().toISOString();
+    const editorId = user?.email || user?.uid || "unknown";
+    const nextVersion = bumpSqpLibraryVersion(sqpPatternLibrary.version);
+    const entry: PatternEntry = {
+      id: isNew ? `custom-${Date.now()}` : sqpEditingEntryId!,
+      category: sqpEntryDraft.category as PatternCategory,
+      scope: (sqpEntryDraft.scope as PatternEntry["scope"]) || "spec-specific",
+      match_type: sqpEntryDraft.match_type as PatternMatchType,
+      terms: sqpEntryDraft.match_type !== "llm_judgment" ? sqpEntryDraft.terms : undefined,
+      description: sqpEntryDraft.description?.trim() || undefined,
+      example: sqpEntryDraft.example?.trim() || undefined,
+      severity: (sqpEntryDraft.severity as PatternSeverity) || "medium",
+      suggested_fix: sqpEntryDraft.suggested_fix!.trim(),
+      added: isNew ? now : sqpEntryDraft.added || now,
+      added_by: isNew ? editorId : sqpEntryDraft.added_by || editorId,
+    };
+    const changelogEntry: ChangelogEntry = {
+      version: nextVersion,
+      date: now,
+      editor: editorId,
+      description: isNew ? `Added entry "${entry.id}" (${entry.category}).` : `Edited entry "${entry.id}" (${entry.category}).`,
+    };
+    const newLibrary: PatternLibrary = {
+      version: nextVersion,
+      changelog: [...sqpPatternLibrary.changelog, changelogEntry],
+      entries: isNew
+        ? [...sqpPatternLibrary.entries, entry]
+        : sqpPatternLibrary.entries.map(e => (e.id === entry.id ? entry : e)),
+    };
+    setSqpPatternLibrary(newLibrary);
+    saveSqpPatternLibrary(newLibrary);
+    closeSqpEntryForm();
+  };
+
+  const deleteSqpEntry = (entryId: string) => {
+    const now = new Date().toISOString();
+    const editorId = user?.email || user?.uid || "unknown";
+    const nextVersion = bumpSqpLibraryVersion(sqpPatternLibrary.version);
+    const changelogEntry: ChangelogEntry = {
+      version: nextVersion,
+      date: now,
+      editor: editorId,
+      description: `Deleted entry "${entryId}".`,
+    };
+    const newLibrary: PatternLibrary = {
+      version: nextVersion,
+      changelog: [...sqpPatternLibrary.changelog, changelogEntry],
+      entries: sqpPatternLibrary.entries.filter(e => e.id !== entryId),
+    };
+    setSqpPatternLibrary(newLibrary);
+    saveSqpPatternLibrary(newLibrary);
+    if (sqpEditingEntryId === entryId) closeSqpEntryForm();
+  };
 
   const saveCustomTeamAndFiles = useCallback(async (team: CustomAgent[], files: KnowledgeFile[], externalResources?: boolean) => {
     if (!user) return;
@@ -9427,6 +9595,244 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                                 </div>
                                 <p className="text-xs text-slate-500">Blacklisted words and the restructuring allowance above are automatically enforced alongside this prompt — no need to repeat them here.</p>
                               </div>
+
+                              {/* Specification Quality Pass — a DIFFERENT feature from the Output
+                                  Editor above: reviews the technical Product Spec (not team chat
+                                  output) for generic AI-texture and spec-writing weaknesses. See
+                                  specQualityPrompt.ts / specQualityTypes.ts. Visually separated
+                                  as its own subsection within this same tab, per design. */}
+                              <div className="pt-2 border-t dark:border-slate-800 space-y-6">
+                                <div className="flex items-center gap-3 pt-4">
+                                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-blue-50 dark:bg-blue-950/30 text-blue-500">
+                                    <Gauge className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200">Specification Quality Pass</h3>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Scores every generated Product Spec against a fixed rubric and flags AI-texture</p>
+                                  </div>
+                                </div>
+
+                                <div className="grid sm:grid-cols-3 gap-3">
+                                  <div className="space-y-1.5">
+                                    <Label htmlFor="sqp-ai-max" className="text-xs font-medium text-slate-500">AI-Likeness max (gate fails above)</Label>
+                                    <Input
+                                      id="sqp-ai-max"
+                                      type="number"
+                                      min={1}
+                                      max={10}
+                                      value={sqpThresholds.ai_likeness_max}
+                                      onChange={(e) => {
+                                        const next = { ...sqpThresholds, ai_likeness_max: Math.min(10, Math.max(1, parseInt(e.target.value, 10) || 1)) };
+                                        setSqpThresholds(next);
+                                      }}
+                                      onBlur={() => saveSqpThresholds(sqpThresholds)}
+                                      className="h-9 text-xs"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label htmlFor="sqp-test-min" className="text-xs font-medium text-slate-500">Testability min (gate fails below)</Label>
+                                    <Input
+                                      id="sqp-test-min"
+                                      type="number"
+                                      min={1}
+                                      max={10}
+                                      value={sqpThresholds.testability_min}
+                                      onChange={(e) => {
+                                        const next = { ...sqpThresholds, testability_min: Math.min(10, Math.max(1, parseInt(e.target.value, 10) || 1)) };
+                                        setSqpThresholds(next);
+                                      }}
+                                      onBlur={() => saveSqpThresholds(sqpThresholds)}
+                                      className="h-9 text-xs"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label htmlFor="sqp-complete-min" className="text-xs font-medium text-slate-500">Completeness min (gate fails below)</Label>
+                                    <Input
+                                      id="sqp-complete-min"
+                                      type="number"
+                                      min={1}
+                                      max={10}
+                                      value={sqpThresholds.completeness_min}
+                                      onChange={(e) => {
+                                        const next = { ...sqpThresholds, completeness_min: Math.min(10, Math.max(1, parseInt(e.target.value, 10) || 1)) };
+                                        setSqpThresholds(next);
+                                      }}
+                                      onBlur={() => saveSqpThresholds(sqpThresholds)}
+                                      className="h-9 text-xs"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label className="text-xs font-medium text-slate-500">Gate Mode</Label>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      onClick={() => { const next = { ...sqpThresholds, gate_mode: "advisory" as const }; setSqpThresholds(next); saveSqpThresholds(next); }}
+                                      className={`text-left p-3 rounded-xl border transition-colors ${sqpThresholds.gate_mode === "advisory" ? "border-blue-300 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20" : "border-slate-200 dark:border-slate-800 bg-card hover:border-slate-300 dark:hover:border-slate-700"}`}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        {sqpThresholds.gate_mode === "advisory" ? <CheckCircle2 className="w-4 h-4 text-blue-500 flex-shrink-0" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300 dark:border-slate-700 flex-shrink-0" />}
+                                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">Advisory (default)</span>
+                                      </div>
+                                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 ml-6">Shown in the Spec Quality panel only — never blocks export.</p>
+                                    </button>
+                                    <button
+                                      onClick={() => { const next = { ...sqpThresholds, gate_mode: "blocking" as const }; setSqpThresholds(next); saveSqpThresholds(next); }}
+                                      className={`text-left p-3 rounded-xl border transition-colors ${sqpThresholds.gate_mode === "blocking" ? "border-blue-300 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20" : "border-slate-200 dark:border-slate-800 bg-card hover:border-slate-300 dark:hover:border-slate-700"}`}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        {sqpThresholds.gate_mode === "blocking" ? <CheckCircle2 className="w-4 h-4 text-blue-500 flex-shrink-0" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300 dark:border-slate-700 flex-shrink-0" />}
+                                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">Blocking</span>
+                                      </div>
+                                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 ml-6">Prevents export until you click "Export Anyway" on a spec that fails the gate.</p>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <Label className="text-xs font-medium text-slate-500">Pattern Library (v{sqpPatternLibrary.version})</Label>
+                                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={openSqpAddEntryForm}>
+                                      <PlusCircle className="w-3.5 h-3.5" /> Add Entry
+                                    </Button>
+                                  </div>
+
+                                  {sqpEditingEntryId && (
+                                    <div className="p-3 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/30 dark:bg-blue-950/10 space-y-2">
+                                      <div className="grid sm:grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                          <Label className="text-[11px] text-slate-500">Category</Label>
+                                          <Select value={sqpEntryDraft.category || "spec-anti-pattern"} onValueChange={(v) => setSqpEntryDraft(prev => ({ ...prev, category: v as PatternCategory }))}>
+                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="phrase-level">phrase-level</SelectItem>
+                                              <SelectItem value="structural">structural</SelectItem>
+                                              <SelectItem value="spec-anti-pattern">spec-anti-pattern</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <Label className="text-[11px] text-slate-500">Match Type</Label>
+                                          <Select value={sqpEntryDraft.match_type || "llm_judgment"} onValueChange={(v) => setSqpEntryDraft(prev => ({ ...prev, match_type: v as PatternMatchType }))}>
+                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="literal_list">literal_list</SelectItem>
+                                              <SelectItem value="regex">regex</SelectItem>
+                                              <SelectItem value="llm_judgment">llm_judgment</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <Label className="text-[11px] text-slate-500">Severity</Label>
+                                          <Select value={sqpEntryDraft.severity || "medium"} onValueChange={(v) => setSqpEntryDraft(prev => ({ ...prev, severity: v as PatternSeverity }))}>
+                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="low">low</SelectItem>
+                                              <SelectItem value="medium">medium</SelectItem>
+                                              <SelectItem value="high">high</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <Label className="text-[11px] text-slate-500">Scope</Label>
+                                          <Select value={sqpEntryDraft.scope || "spec-specific"} onValueChange={(v) => setSqpEntryDraft(prev => ({ ...prev, scope: v as PatternEntry["scope"] }))}>
+                                            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="universal">universal</SelectItem>
+                                              <SelectItem value="spec-specific">spec-specific</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                      </div>
+
+                                      {sqpEntryDraft.match_type !== "llm_judgment" && (
+                                        <div className="space-y-1">
+                                          <Label className="text-[11px] text-slate-500">Terms (literal_list) or regex patterns — one per line</Label>
+                                          <Textarea
+                                            rows={3}
+                                            value={(sqpEntryDraft.terms || []).join("\n")}
+                                            onChange={(e) => setSqpEntryDraft(prev => ({ ...prev, terms: e.target.value.split("\n").map(t => t.trim()).filter(Boolean) }))}
+                                            className="text-xs font-mono"
+                                          />
+                                        </div>
+                                      )}
+
+                                      <div className="space-y-1">
+                                        <Label className="text-[11px] text-slate-500">Description (required if no example)</Label>
+                                        <Textarea
+                                          rows={2}
+                                          value={sqpEntryDraft.description || ""}
+                                          onChange={(e) => setSqpEntryDraft(prev => ({ ...prev, description: e.target.value }))}
+                                          className="text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-[11px] text-slate-500">Concrete example (required if no description)</Label>
+                                        <Textarea
+                                          rows={2}
+                                          value={sqpEntryDraft.example || ""}
+                                          onChange={(e) => setSqpEntryDraft(prev => ({ ...prev, example: e.target.value }))}
+                                          className="text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-[11px] text-slate-500">Suggested fix (required)</Label>
+                                        <Textarea
+                                          rows={2}
+                                          value={sqpEntryDraft.suggested_fix || ""}
+                                          onChange={(e) => setSqpEntryDraft(prev => ({ ...prev, suggested_fix: e.target.value }))}
+                                          className="text-xs"
+                                        />
+                                      </div>
+
+                                      {sqpFormError && <p className="text-xs text-red-600 dark:text-red-400">{sqpFormError}</p>}
+
+                                      <div className="flex items-center gap-2 pt-1">
+                                        <Button size="sm" className="h-7 text-xs" onClick={saveSqpEntry}>Save Entry</Button>
+                                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={closeSqpEntryForm}>Cancel</Button>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <div className="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-1">
+                                    {(["phrase-level", "structural", "spec-anti-pattern"] as const).map(cat => {
+                                      const entriesInCat = sqpPatternLibrary.entries.filter(e => e.category === cat);
+                                      if (entriesInCat.length === 0) return null;
+                                      return (
+                                        <div key={cat} className="space-y-1.5">
+                                          <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 capitalize">{cat.replace(/-/g, " ")}</p>
+                                          {entriesInCat.map(entry => (
+                                            <div key={entry.id} className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-card flex items-start justify-between gap-2">
+                                              <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                  <Badge
+                                                    className={`text-[10px] ${entry.severity === "high" ? "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-900" : entry.severity === "medium" ? "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900" : "bg-slate-50 dark:bg-slate-900/50 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800"}`}
+                                                  >
+                                                    {entry.severity}
+                                                  </Badge>
+                                                  <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{entry.match_type}</span>
+                                                  <span className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
+                                                    {entry.terms && entry.terms.length > 0 ? entry.terms.slice(0, 3).join(", ") + (entry.terms.length > 3 ? ` +${entry.terms.length - 3} more` : "") : entry.description}
+                                                  </span>
+                                                </div>
+                                                {entry.suggested_fix && <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">{entry.suggested_fix}</p>}
+                                              </div>
+                                              <div className="flex items-center gap-1 flex-shrink-0">
+                                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => openSqpEditEntryForm(entry)} title="Edit">
+                                                  <Pencil className="w-3 h-3" />
+                                                </Button>
+                                                <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-500 hover:text-red-600" onClick={() => deleteSqpEntry(entry.id)} title="Delete">
+                                                  <Trash2 className="w-3 h-3" />
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           </TabsContent>
                         </div>
@@ -11020,6 +11426,8 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                         }}
                         onBackupToDrive={backupProductSpecToDrive}
                         isBackingUpToDrive={isBackingUpToDrive}
+                        sqpThresholds={sqpThresholds}
+                        sqpPatternLibrary={sqpPatternLibrary}
                         onAddStyleInspirationImage={addStyleInspirationImage}
                         onAddStyleInspirationUrl={addStyleInspirationUrl}
                       />

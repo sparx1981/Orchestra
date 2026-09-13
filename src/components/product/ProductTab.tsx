@@ -9,6 +9,8 @@ import {
 import { DEFAULT_DESIGN_DIALS, type DesignDials } from "@/src/lib/designIntelligence";
 import { generateDesignSystem } from "@/src/lib/designIntelligencePrompt";
 import { runCraftReview, buildModeClassificationInstruction, parseModeClassificationResponse } from "@/src/lib/craftReviewPrompt";
+import { runSpecQualityPass } from "@/src/lib/specQualityPrompt";
+import { DEFAULT_SQP_THRESHOLDS, DEFAULT_SQP_PATTERN_LIBRARY, type PatternLibrary, type SqpThresholdConfig, type SpecQualityReviewResult } from "@/src/lib/specQualityTypes";
 import {
   buildProductSpecMarkdown,
   buildClientFacingSpecMarkdown,
@@ -106,6 +108,12 @@ interface ProductTabProps {
   // KnowledgeFile so its id can be recorded against the question.
   onAddStyleInspirationImage?: (file: File) => Promise<KnowledgeFile>;
   onAddStyleInspirationUrl?: (url: string) => KnowledgeFile;
+  // Automated Specification Quality Pass (SQP) config — App.tsx owns loading/saving these
+  // from Firestore (Settings → Editor → Specification Quality Pass) and hands down whatever
+  // is currently in effect; both default to the bundled seed/defaults when the user has
+  // never edited them (see DEFAULT_SQP_THRESHOLDS / DEFAULT_SQP_PATTERN_LIBRARY).
+  sqpThresholds?: SqpThresholdConfig;
+  sqpPatternLibrary?: PatternLibrary;
 }
 
 export function ProductTab({
@@ -127,6 +135,8 @@ export function ProductTab({
   isBackingUpToDrive,
   onAddStyleInspirationImage,
   onAddStyleInspirationUrl,
+  sqpThresholds = DEFAULT_SQP_THRESHOLDS,
+  sqpPatternLibrary = DEFAULT_SQP_PATTERN_LIBRARY,
 }: ProductTabProps) {
   const [internalPrompt, setInternalPrompt] = useState("");
   const prompt = productPrompt !== undefined ? productPrompt : internalPrompt;
@@ -137,6 +147,14 @@ export function ProductTab({
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentPhase, setCurrentPhase] = useState<string>("");
   const [spec, setSpec] = useState<ProductSpec | null>(null);
+
+  // Specification Quality Pass (SQP) panel UI state. showQualityRewrite toggles the
+  // suggested-rewrite comparison view; sqpExportOverride tracks, per spec id, whether the
+  // user explicitly clicked "Export Anyway" past a blocking gate (see sqpThresholds.gate_mode
+  // — advisory never needs this; blocking does). Neither is persisted — an override is a
+  // one-session decision, not a stored preference.
+  const [showQualityRewrite, setShowQualityRewrite] = useState(false);
+  const [sqpExportOverride, setSqpExportOverride] = useState<Record<string, boolean>>({});
 
   // Storage-limit warning: shown when the spec is large enough that Chat History would
   // trim some of it on save (see wouldExceedHistoryStorageLimits). Dismissible per spec —
@@ -316,8 +334,24 @@ export function ProductTab({
     setTimeout(() => setCopiedType(null), 2200);
   };
 
+  // gate_mode "blocking" (never the default — see SqpThresholdConfig) prevents the technical
+  // spec's export actions from firing until the user explicitly overrides via "Export Anyway"
+  // in the Spec Quality panel. "advisory" (the default) never blocks — this always resolves
+  // false in that mode regardless of gate_status. The Client-Facing Spec is out of scope for
+  // SQP entirely, so its own export handlers below never consult this.
+  const isSqpExportBlocked = (): boolean => {
+    if (!spec?.qualityReview) return false;
+    if (sqpThresholds.gate_mode !== "blocking") return false;
+    if (spec.qualityReview.gate_status !== "needs_revision") return false;
+    return !sqpExportOverride[spec.id];
+  };
+
   const handleDownloadSpec = () => {
     if (!spec) return;
+    if (isSqpExportBlocked()) {
+      logDebug("warn", "Export blocked by the Specification Quality Pass gate", "Use \"Export Anyway\" in the Spec Quality panel to override.");
+      return;
+    }
     const md = buildProductSpecMarkdown(spec);
     const filename = `${spec.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-spec.md`;
     downloadFile(filename, md);
@@ -337,6 +371,10 @@ export function ProductTab({
 
   const handleExportDocx = async () => {
     if (!spec) return;
+    if (isSqpExportBlocked()) {
+      logDebug("warn", "Export blocked by the Specification Quality Pass gate", "Use \"Export Anyway\" in the Spec Quality panel to override.");
+      return;
+    }
     setIsExportingFormat("docx");
     try {
       const blob = await buildProductSpecDocx(spec);
@@ -351,6 +389,10 @@ export function ProductTab({
 
   const handleExportRtf = () => {
     if (!spec) return;
+    if (isSqpExportBlocked()) {
+      logDebug("warn", "Export blocked by the Specification Quality Pass gate", "Use \"Export Anyway\" in the Spec Quality panel to override.");
+      return;
+    }
     try {
       const rtf = buildProductSpecRtf(spec);
       downloadBinaryFile(`${specFilenameBase()}-spec.rtf`, new TextEncoder().encode(rtf), "application/rtf");
@@ -362,6 +404,10 @@ export function ProductTab({
 
   const handleExportPdf = async () => {
     if (!spec) return;
+    if (isSqpExportBlocked()) {
+      logDebug("warn", "Export blocked by the Specification Quality Pass gate", "Use \"Export Anyway\" in the Spec Quality panel to override.");
+      return;
+    }
     setIsExportingFormat("pdf");
     try {
       const bytes = await buildProductSpecPdf(spec);
@@ -1262,6 +1308,30 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
       // the very last state (including any consistency-sweep notes) is what's on screen and
       // what gets saved once generation is complete.
       pushLiveSpec();
+
+      // Automated Specification Quality Pass (SQP) — deliberately fired here WITHOUT an
+      // await: the spec above is already complete and shown to the user, and generation must
+      // not block on this. Sets qualityReviewPending immediately so the UI can show a
+      // "running" indicator, then merges the result in (via setSpec, which flows through the
+      // SAME onSpecChange → Chat History persistence path as every other spec update) once
+      // Stage 1-4 resolve. Non-fatal on failure, same convention as Modules A/B above.
+      // Technical Product Spec only — never fired for the Client-Facing Spec.
+      if (!signal.aborted && draftedSections.length > 0) {
+        const qualitySpecId = specId;
+        const specTextForQuality = draftedSections.map(s => `## ${s.heading}\n\n${s.content}`).join("\n\n---\n\n");
+        setSpec(prev => (prev && prev.id === qualitySpecId ? { ...prev, qualityReviewPending: true } : prev));
+        const { qaAgent: sqpReviewer } = pickAgentRoles();
+        runSpecQualityPass(specTextForQuality, sqpPatternLibrary, sqpThresholds, sqpReviewer, callAgent)
+          .then(result => {
+            setSpec(prev => (prev && prev.id === qualitySpecId ? { ...prev, qualityReview: result, qualityReviewPending: false } : prev));
+            logDebug("info", "Specification Quality Pass complete", `Gate: ${result.gate_status} — AI-Likeness ${result.scores.ai_likeness}, Testability ${result.scores.testability}, Completeness ${result.scores.completeness}`);
+          })
+          .catch(e => {
+            logDebug("warn", "Specification Quality Pass failed — the spec is still complete without it", e?.message || e);
+            setSpec(prev => (prev && prev.id === qualitySpecId ? { ...prev, qualityReviewPending: false } : prev));
+          });
+      }
+
       logDebug(
         "info",
         `Product specification generated successfully: ${parsedMeta.title}`,
@@ -1278,6 +1348,36 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
       setCurrentPhase("");
       abortControllerRef.current = null;
     }
+  };
+
+  // Accepts the Specification Quality Pass's suggested rewrite, replacing the affected
+  // sections' content — never auto-applied (see SpecQualityReviewResult.rewrite), so this
+  // only ever runs on an explicit click. The rewrite text was built from sections joined as
+  // "## <heading>\n\n<content>" separated by "---" (see specTextForQuality in
+  // handleGenerateSpec), so it's split back the same way and matched by heading, replacing
+  // each section individually — with its prior content pushed to revisionHistory, the same
+  // undo-able convention every other section edit in this file follows — rather than
+  // collapsing the whole spec into one opaque blob.
+  const handleAcceptQualityRewrite = () => {
+    if (!spec?.qualityReview?.rewrite) return;
+    const blocks = spec.qualityReview.rewrite.split(/\n-{3,}\n/g);
+    let changedCount = 0;
+    const updatedSections = spec.sections.map(sec => {
+      const escapedHeading = sec.heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const block = blocks.find(b => new RegExp(`^\\s*##\\s*${escapedHeading}\\s*\\n`).test(b));
+      if (!block) return sec;
+      const content = block.replace(new RegExp(`^\\s*##\\s*${escapedHeading}\\s*\\n+`), "").trim();
+      if (!content || content === sec.content.trim()) return sec;
+      changedCount++;
+      return {
+        ...sec,
+        content,
+        revisionHistory: [...(sec.revisionHistory || []), { content: sec.content, revisedAt: new Date().toISOString(), reason: "Superseded by Specification Quality Pass rewrite" }],
+      };
+    });
+    setSpec({ ...spec, sections: updatedSections });
+    setShowQualityRewrite(false);
+    logDebug("info", "Accepted Specification Quality Pass rewrite", `${changedCount} section(s) updated`);
   };
 
   // "Regenerate Design System" — an explicit, separate user action from regenerating any
@@ -2366,6 +2466,138 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
                   <ol className="text-xs text-slate-600 dark:text-slate-300 list-decimal pl-4 space-y-0.5">
                     {spec.designReview.fixList.map((f, i) => <li key={i}>{f}</li>)}
                   </ol>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Spec Quality panel — Automated Specification Quality Pass (SQP). Runs as a
+              background pass after generation (see handleGenerateSpec), so this renders a
+              pending indicator while qualityReviewPending is true, then the full result once
+              qualityReview lands. Mirrors the Design & UX Review panel's visual pattern above. */}
+          {!isGenerating && spec.qualityReviewPending && !spec.qualityReview && (
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-card flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Running Specification Quality Pass...
+            </div>
+          )}
+
+          {!isGenerating && spec.qualityReview && (
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-card space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-bold flex items-center gap-2 text-slate-800 dark:text-slate-100">
+                  <Gauge className="w-4 h-4 text-blue-500" /> Spec Quality
+                </h3>
+                <Badge
+                  className={spec.qualityReview.gate_status === "pass"
+                    ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900"
+                    : "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900"}
+                >
+                  {spec.qualityReview.gate_status === "pass" ? "Gate: Pass" : "Gate: Needs Revision"}
+                </Badge>
+              </div>
+
+              {spec.qualityReview.hollow_spec_flag && (
+                <div className="p-2.5 rounded-lg border border-amber-200 dark:border-amber-900/60 bg-amber-50/60 dark:bg-amber-950/20 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <span>Hollow-spec warning: this document reads as polished prose but scored low on testability and/or completeness — an engineer may not have enough here to build from.</span>
+                </div>
+              )}
+
+              {/* Score summary — the 4 fixed rubric dimensions, justification on hover. */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                {([
+                  { key: "ai_likeness", label: "AI-Likeness" },
+                  { key: "requirement_clarity", label: "Req. Clarity" },
+                  { key: "testability", label: "Testability" },
+                  { key: "completeness", label: "Completeness" },
+                ] as const).map(d => (
+                  <div key={d.key}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 text-center cursor-default">
+                          <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{d.label}</p>
+                          <p className="text-lg font-bold text-slate-800 dark:text-slate-100">{spec.qualityReview!.scores[d.key]}<span className="text-xs font-normal text-slate-400">/10</span></p>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-xs">{spec.qualityReview!.score_justifications[d.key]}</TooltipContent>
+                    </Tooltip>
+                  </div>
+                ))}
+              </div>
+
+              {spec.qualityReview.top_changes.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Top Changes</p>
+                  <ol className="text-xs text-slate-600 dark:text-slate-300 list-decimal pl-4 space-y-0.5">
+                    {spec.qualityReview.top_changes.map((c, i) => <li key={i}>{c}</li>)}
+                  </ol>
+                </div>
+              )}
+
+              {(spec.qualityReview.structural_flags.length > 0 || spec.qualityReview.anti_pattern_flags.length > 0) && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Flags</p>
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto custom-scrollbar pr-1">
+                    {spec.qualityReview.structural_flags.map((f, i) => (
+                      <div key={`sf-${i}`} className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 text-xs space-y-0.5">
+                        <p className="font-semibold text-slate-700 dark:text-slate-200">{f.pattern}</p>
+                        <p className="text-slate-500 dark:text-slate-400 italic">&ldquo;{f.quote}&rdquo;</p>
+                        <p className="text-slate-600 dark:text-slate-300">{f.suggestion}</p>
+                      </div>
+                    ))}
+                    {spec.qualityReview.anti_pattern_flags.map((f, i) => (
+                      <div key={`apf-${i}`} className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 text-xs space-y-0.5">
+                        <p className="font-semibold text-slate-700 dark:text-slate-200">{f.pattern_id}</p>
+                        <p className="text-slate-500 dark:text-slate-400 italic">&ldquo;{f.quote}&rdquo;</p>
+                        <p className="text-slate-600 dark:text-slate-300">{f.suggestion}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {spec.qualityReview.rewrite && (
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={() => setShowQualityRewrite(v => !v)}>
+                      {showQualityRewrite ? "Hide" : "View"} Suggested Rewrite
+                    </Button>
+                    {showQualityRewrite && (
+                      <>
+                        <Button size="sm" className="h-7 text-xs gap-1.5" onClick={handleAcceptQualityRewrite}>
+                          <Check className="w-3.5 h-3.5" /> Accept Rewrite
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowQualityRewrite(false)}>
+                          Dismiss
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  {showQualityRewrite && (
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Current</p>
+                        <div className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 text-xs text-slate-600 dark:text-slate-300 max-h-80 overflow-y-auto custom-scrollbar whitespace-pre-wrap">
+                          {spec.sections.map(s => `## ${s.heading}\n\n${s.content}`).join("\n\n---\n\n")}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Suggested Rewrite</p>
+                        <div className="p-2 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 text-xs text-slate-700 dark:text-slate-200 max-h-80 overflow-y-auto custom-scrollbar whitespace-pre-wrap">
+                          {spec.qualityReview.rewrite}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {sqpThresholds.gate_mode === "blocking" && spec.qualityReview.gate_status === "needs_revision" && !sqpExportOverride[spec.id] && (
+                <div className="p-2.5 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50/60 dark:bg-red-950/20 text-xs text-red-800 dark:text-red-300 flex items-start justify-between gap-3 flex-wrap">
+                  <span className="flex items-start gap-1.5"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />Export is blocked — Specification Quality Pass is in Blocking mode and this spec didn't pass the gate.</span>
+                  <Button size="sm" variant="outline" className="h-6 text-[11px] border-red-300 dark:border-red-800 text-red-700 dark:text-red-300" onClick={() => setSqpExportOverride(prev => ({ ...prev, [spec.id]: true }))}>
+                    Export Anyway
+                  </Button>
                 </div>
               )}
             </div>

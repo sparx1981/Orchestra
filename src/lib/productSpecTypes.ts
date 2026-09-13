@@ -1,5 +1,6 @@
 import type { CustomAgent, KnowledgeFile } from "@/src/App";
 import { truncateText } from "@/src/lib/textUtils";
+import type { SpecQualityReviewResult } from "@/src/lib/specQualityTypes";
 
 export type VibeCodingTool =
   | "google_ai_studio"
@@ -312,6 +313,16 @@ export interface ProductSpec {
   // UI control can read/write it directly without reaching into the review result.
   mode?: SurfaceMode;
   modeRationale?: string;
+  // Automated Specification Quality Pass (SQP) — see specQualityPrompt.ts. Runs as a
+  // BACKGROUND pass after the spec (and Design Intelligence/Craft Review above) are already
+  // shown to the user, so it's optional and populated asynchronously rather than gating
+  // generation completion. Technical Product Spec only — never generated for
+  // clientFacingSpec above.
+  qualityReview?: SpecQualityReviewResult;
+  // True while the background SQP pass (Stage 1-4) is running, so the UI can show a "Running
+  // quality pass..." indicator. False/absent once qualityReview is populated (or the pass
+  // failed — SQP is additive, never a gate on the spec being usable).
+  qualityReviewPending?: boolean;
 }
 
 export const VIBE_CODING_TOOLS: VibeCodingToolInfo[] = [
