@@ -887,7 +887,10 @@ Output strictly raw JSON without markdown code fences.`;
           targetTool: selectedTool,
           appConcept: parsedMeta.appConcept,
           createdAt: new Date().toISOString(),
-          sections: [...sectionsRef],
+          // sectionsRef is pre-sized to hold every section's fixed slot before drafting
+          // (which now runs in parallel) fills them in, so a still-empty slot for a
+          // section that hasn't finished yet is a hole here, not a real entry.
+          sections: sectionsRef.filter((s): s is ProductSpecSection => !!s),
           groundedSourceCount: contentBearingKnowledgeFiles.length,
           groundedSourceIds: contentBearingKnowledgeFiles.map(f => f.id),
           groundedSources: groundedSources.length > 0 ? groundedSources : undefined,
@@ -1042,6 +1045,11 @@ Synthesize the entire team's agreements — including the File Manifest — into
       ];
 
       const draftedSections: ProductSpecSection[] = sectionsRef;
+      // Pre-sized (sparse) rather than grown by .push() below: sections now draft
+      // concurrently and can finish in any order, but the displayed/reviewed order must
+      // stay the section-config order the user sees in the ToC, so each result is written
+      // to its own fixed index rather than appended as it arrives.
+      draftedSections.length = sectionConfigs.length;
       // Hoisted above the drafting loop (not just the review loop below) so a drafting
       // agent's own genuine questions land in the same Open Questions list as the
       // reviewer's — the user shouldn't have to know or care which phase raised something.
@@ -1054,19 +1062,17 @@ Synthesize the entire team's agreements — including the File Manifest — into
       // that one agent surface something to the human when it can't confidently proceed.
       const draftingQuestionsAddendum = `\n\nIf, while drafting, you hit a genuine ambiguity that only the product owner (not a teammate) can resolve, and you cannot reasonably proceed with a sensible default, append this exact block at the very end of your response, after all normal content (omit entirely if you have no such questions — most sections should have none):\n---QUESTIONS_FOR_USER---\n- your question here\n---END_QUESTIONS---`;
 
-      for (let i = 0; i < sectionConfigs.length; i++) {
-        if (signal.aborted) throw new DOMException("Spec generation stopped by user.", "AbortError");
-        const cfg = sectionConfigs[i];
-        setCurrentPhase(`Drafting ${cfg.heading} with ${cfg.agent.name}... (${i + 1}/${sectionConfigs.length})`);
-
-        // Supply preceding drafted sections so subsequent agents cross-reference, validate agreements, and resolve conflicts
-        const priorAgreements = draftedSections.length > 0
-          ? `\n\nALREADY AGREED SPECIFICATION SECTIONS (Cross-reference these contributions to avoid contradictions):\n${draftedSections
-              .map(s => `[Section: ${s.heading} | Author: ${s.authorAgentName}]\n${s.content.slice(0, 1600)}...`)
-              .join("\n\n")}`
-          : "";
-
-        const promptBody = `TASK:\n${prompt}\n${kbContext}${designSystemContext}\n\nAPP TITLE: ${parsedMeta.title}\nCONCEPT: ${parsedMeta.appConcept}\nTARGET AI TOOL: ${toolInfo.label}${priorAgreements}`;
+      // Sections draft in parallel rather than one at a time. This drops the previous
+      // "cross-reference the sections already drafted" context each agent used to get,
+      // since nothing is drafted yet when everything starts simultaneously — the
+      // cross-agent review pass below (and, for order-induced gaps specifically, the Final
+      // Consistency Sweep after it) is what now carries the full weight of catching
+      // inter-section conflicts, rather than sharing that job with drafting-time context.
+      let draftedCount = 0;
+      setCurrentPhase(`Drafting ${sectionConfigs.length} sections in parallel...`);
+      await Promise.all(sectionConfigs.map(async (cfg, i) => {
+        if (signal.aborted) return;
+        const promptBody = `TASK:\n${prompt}\n${kbContext}${designSystemContext}\n\nAPP TITLE: ${parsedMeta.title}\nCONCEPT: ${parsedMeta.appConcept}\nTARGET AI TOOL: ${toolInfo.label}`;
         const rawContent = await callAgent(cfg.agent, promptBody, cfg.instruction + draftingQuestionsAddendum, signal);
 
         const sectionId = `sec_${Date.now()}_${i}`;
@@ -1090,7 +1096,7 @@ Synthesize the entire team's agreements — including the File Manifest — into
             });
         }
 
-        draftedSections.push({
+        draftedSections[i] = {
           id: sectionId,
           key: cfg.key,
           heading: cfg.heading,
@@ -1098,9 +1104,12 @@ Synthesize the entire team's agreements — including the File Manifest — into
           authorAgentId: cfg.agent.id,
           authorAgentName: cfg.agent.name,
           content,
-        });
+        };
+        draftedCount++;
+        setCurrentPhase(`Drafting sections in parallel... (${draftedCount}/${sectionConfigs.length} — ${cfg.agent.name} finished "${cfg.heading}")`);
         pushLiveSpec(); // show this section on screen the moment it's drafted, before review even starts
-      }
+      }));
+      if (signal.aborted) throw new DOMException("Spec generation stopped by user.", "AbortError");
 
       // Step 3: Cross-Agent Review & Reconciliation (skipped in "quick" mode). Each section
       // is checked by a teammate other than its author for feasibility, technical
@@ -1138,8 +1147,20 @@ Synthesize the entire team's agreements — including the File Manifest — into
       ];
 
       if (generationDepth === "thorough") {
-        for (let i = 0; i < draftedSections.length; i++) {
-          if (signal.aborted) throw new DOMException("Spec generation stopped by user.", "AbortError");
+        let reviewedCount = 0;
+        setCurrentPhase(`Cross-checking ${draftedSections.length} sections in parallel...`);
+
+        // Each section's whole review→revise convergence loop now runs as its own
+        // concurrent task instead of one section at a time. otherSectionsSummary below
+        // still reads the shared draftedSections array, so a task can pick up another
+        // section's revision mid-flight (or not, depending on timing) rather than the
+        // previous guaranteed "later sections always see earlier ones' latest revision" —
+        // same tradeoff as parallelizing the drafting loop above: the Final Consistency
+        // Sweep right after this is what now absorbs whatever ordering-dependent gaps
+        // this concurrency introduces, same as it already did for gaps the old sequential
+        // version could leave behind.
+        const reviewSection = async (i: number) => {
+          if (signal.aborted) return;
           let sec = draftedSections[i];
           const author = effectiveTeam.find(a => a.id === sec.authorAgentId) || leadAgent;
           const { agent: reviewer, crossProvider } = pickReviewer(sec.authorAgentId, author.provider);
@@ -1154,7 +1175,7 @@ Synthesize the entire team's agreements — including the File Manifest — into
           // not just one review and one automatic fix.
           while (round < MAX_REVIEW_ROUNDS) {
             round++;
-            setCurrentPhase(`${reviewer.name} is cross-checking "${sec.heading}" — round ${round}/${MAX_REVIEW_ROUNDS}... (section ${i + 1}/${draftedSections.length})`);
+            setCurrentPhase(`${reviewer.name} is cross-checking "${sec.heading}" — round ${round}/${MAX_REVIEW_ROUNDS}... (${reviewedCount}/${draftedSections.length} sections done)`);
 
             const otherSectionsSummary = draftedSections
               .filter(s => s.id !== sec.id)
@@ -1241,8 +1262,12 @@ ${review.revisionInstructions || "Tighten technical accuracy and resolve any inc
             reviewRounds: round,
             reviewCrossProvider: crossProvider,
           };
+          reviewedCount++;
           pushLiveSpec(); // show this section's finished review state once it's fully resolved (not on every intermediate round)
-        }
+        };
+
+        await Promise.all(draftedSections.map((_, i) => reviewSection(i)));
+        if (signal.aborted) throw new DOMException("Spec generation stopped by user.", "AbortError");
 
         // Step 4: Final Consistency Sweep. The per-section review above is order-dependent
         // — section 1's reviewer never sees what section 8 became AFTER its own revision.
@@ -1372,10 +1397,14 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
         `${sectionsRef.length} sections, ${sectionsRef.filter(s => s.reviewVerdict === "revised").length} revised after review${questionsRef.length > 0 ? `, ${questionsRef.length} open question(s) for you` : ""}`
       );
     } catch (err: any) {
+      // sectionsRef may be a pre-sized sparse array here (drafting runs its sections in
+      // parallel — see above) if generation stopped before every in-flight section
+      // resolved, so count filled slots rather than trusting .length.
+      const completedCount = sectionsRef.filter(Boolean).length;
       if (err?.name === "AbortError" || signal.aborted) {
-        logDebug("info", "Product spec generation aborted by user.", `${sectionsRef.length} section(s) completed before stopping — still shown on screen.`);
+        logDebug("info", "Product spec generation aborted by user.", `${completedCount} section(s) completed before stopping — still shown on screen.`);
       } else {
-        logDebug("error", "Error generating product spec", `${err?.message || err}${sectionsRef.length > 0 ? ` — ${sectionsRef.length} section(s) completed before the error are still shown on screen.` : ""}`);
+        logDebug("error", "Error generating product spec", `${err?.message || err}${completedCount > 0 ? ` — ${completedCount} section(s) completed before the error are still shown on screen.` : ""}`);
       }
     } finally {
       setIsGenerating(false);
