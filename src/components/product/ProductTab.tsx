@@ -2590,12 +2590,12 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
                 ] as const).map(d => (
                   <div key={d.key}>
                     <Tooltip>
-                      <TooltipTrigger asChild>
+                      <TooltipTrigger render={
                         <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 text-center cursor-default">
                           <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{d.label}</p>
                           <p className="text-lg font-bold text-slate-800 dark:text-slate-100">{spec.qualityReview!.scores[d.key]}<span className="text-xs font-normal text-slate-400">/10</span></p>
                         </div>
-                      </TooltipTrigger>
+                      } />
                       <TooltipContent className="max-w-xs text-xs">{spec.qualityReview!.score_justifications[d.key]}</TooltipContent>
                     </Tooltip>
                   </div>

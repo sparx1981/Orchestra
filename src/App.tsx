@@ -9884,7 +9884,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                         )}
                       </Button>
                     } />
-                    <DropdownMenuContent className="w-56" align="end" forceMount>
+                    <DropdownMenuContent className="w-56" align="end">
                       <DropdownMenuGroup>
                         <DropdownMenuLabel className="font-normal">
                           <div className="flex flex-col space-y-1">
@@ -15544,7 +15544,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                       const verified = idx === 0 ? cmp.hadVerifiedCalculationsA : cmp.hadVerifiedCalculationsB;
                       return (
                         <div key={run.id} className="p-3 rounded-lg bg-surface-2 space-y-1">
-                          <span className="text-xs font-semibold text-muted-foreground">{idx === 0 ? "A" : "B"} · {new Date(run.startedAt || Date.now()).toLocaleDateString()}</span>
+                          <span className="text-xs font-semibold text-muted-foreground">{idx === 0 ? "A" : "B"} · {new Date(run.timestamp || Date.now()).toLocaleDateString()}</span>
                           <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">{run.prompt}</p>
                           {/* Grounding asymmetry between compared runs (Phase 4 roadmap #1) —
                               comparing a grounded run against an ungrounded one side by side

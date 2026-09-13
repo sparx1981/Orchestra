@@ -24,15 +24,6 @@ interface State {
  * chunk manifest, rather than retrying the same now-stale import() reference in place.
  */
 export class LazyLoadErrorBoundary extends Component<Props, State> {
-  // This project has no @types/react installed (react resolves as an untyped module), which
-  // leaves `Component`'s own generic type parameters unresolvable and its inherited
-  // `props`/`state` invisible to tsc — these two `declare` fields are a type-only
-  // workaround (no runtime effect; React itself still sets both via super(props)/setState)
-  // so this one class component checks cleanly under that gap rather than silently
-  // type-checking as `any` everywhere `this.props`/`this.state` is used below.
-  declare props: Readonly<Props>;
-  declare state: Readonly<State>;
-
   constructor(props: Props) {
     super(props);
     this.state = { failed: false };
