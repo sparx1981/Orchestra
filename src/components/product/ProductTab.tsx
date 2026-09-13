@@ -1072,8 +1072,22 @@ Synthesize the entire team's agreements — including the File Manifest — into
       setCurrentPhase(`Drafting ${sectionConfigs.length} sections in parallel...`);
       await Promise.all(sectionConfigs.map(async (cfg, i) => {
         if (signal.aborted) return;
-        const promptBody = `TASK:\n${prompt}\n${kbContext}${designSystemContext}\n\nAPP TITLE: ${parsedMeta.title}\nCONCEPT: ${parsedMeta.appConcept}\nTARGET AI TOOL: ${toolInfo.label}`;
-        const rawContent = await callAgent(cfg.agent, promptBody, cfg.instruction + draftingQuestionsAddendum, signal);
+        let rawContent: string;
+        try {
+          const promptBody = `TASK:\n${prompt}\n${kbContext}${designSystemContext}\n\nAPP TITLE: ${parsedMeta.title}\nCONCEPT: ${parsedMeta.appConcept}\nTARGET AI TOOL: ${toolInfo.label}`;
+          rawContent = await callAgent(cfg.agent, promptBody, cfg.instruction + draftingQuestionsAddendum, signal);
+        } catch (e) {
+          // One section genuinely failing (not a user-initiated Stop) used to end
+          // generation immediately back when drafting was sequential — nothing else was
+          // ever in flight. Now that every section starts at once, a sibling call left
+          // running after this rejects Promise.all would keep burning real API cost for a
+          // result nothing will read, and could still land in draftedSections/pushLiveSpec
+          // after the outer catch/finally already reported failure. Aborting here cancels
+          // those in-flight requests for real (signal is threaded into the underlying
+          // axios/fetch call — see callAgent) rather than leaving them to finish unseen.
+          controller.abort(e instanceof Error ? e : new Error(String(e)));
+          throw e;
+        }
 
         const sectionId = `sec_${Date.now()}_${i}`;
         let content = rawContent.trim();

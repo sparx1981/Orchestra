@@ -223,6 +223,7 @@ import { wouldExceedHistoryStorageLimits, capSpecForHistoryStorage, SAFE_HISTORY
 import { DEFAULT_SQP_THRESHOLDS, DEFAULT_SQP_PATTERN_LIBRARY, type SqpThresholdConfig, type PatternLibrary, type PatternEntry, type PatternCategory, type PatternMatchType, type PatternSeverity, type ChangelogEntry } from "@/src/lib/specQualityTypes";
 import { isLikelyTextSourceFile, prioritizeCodebasePaths, buildCodebaseDigest, type CodebaseFileEntry } from "@/src/lib/codebaseIngest";
 import { buildProductSpecDocx } from "@/src/lib/productSpecExport";
+import { LazyLoadErrorBoundary } from "@/src/components/LazyLoadErrorBoundary";
 
 // ProductTab, EnquiryHub, and PublicIntakePortal are each large, tab-scoped surfaces (the
 // Product tab alone is 3000+ lines) that most sessions never visit — dynamically imported
@@ -1583,9 +1584,11 @@ export default function App() {
   });
   if (intakeToken) {
     return (
-      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-[#fafafa] dark:bg-slate-950"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
-        <PublicIntakePortal token={intakeToken} />
-      </Suspense>
+      <LazyLoadErrorBoundary label="intake form">
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-[#fafafa] dark:bg-slate-950"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
+          <PublicIntakePortal token={intakeToken} />
+        </Suspense>
+      </LazyLoadErrorBoundary>
     );
   }
 
@@ -11410,6 +11413,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                         the workspace panel on large screens, full-width when it's closed. */}
                     <div className={`space-y-6 transition-[padding] duration-300 ease-in-out ${isLeftPanelOpen ? "lg:pl-[344px] xl:pl-[404px]" : "lg:pl-0"}`}>
                     {activeTab === "product" ? (
+                      <LazyLoadErrorBoundary label="Product tab">
                       <Suspense fallback={<div className="flex items-center justify-center py-24"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
                       <ProductTab
                         customTeam={productTeam}
@@ -11447,6 +11451,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                         onAddStyleInspirationUrl={addStyleInspirationUrl}
                       />
                       </Suspense>
+                      </LazyLoadErrorBoundary>
                     ) : (
                       <div className="max-w-[1700px] mx-auto space-y-6">
                     {(() => {
@@ -13896,9 +13901,11 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
               ) : activeTab === "enquiries" ? (
                 /* Enquiries Tab (BriefBridge) */
                 user && (
-                  <Suspense fallback={<div className="flex items-center justify-center py-24"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
-                    <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} productTeam={productTeam} callAgent={callAgent} />
-                  </Suspense>
+                  <LazyLoadErrorBoundary label="Enquiries tab">
+                    <Suspense fallback={<div className="flex items-center justify-center py-24"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
+                      <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} productTeam={productTeam} callAgent={callAgent} />
+                    </Suspense>
+                  </LazyLoadErrorBoundary>
                 )
               ) : (
                 /* History Tab */
