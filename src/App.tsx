@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, memo, createContext, useContext, ChangeEvent, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo, createContext, useContext, ChangeEvent, type ReactNode, lazy, Suspense } from "react";
 import axios from "axios";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -217,15 +217,20 @@ import { DebugPanel, type DebugLogEntry } from "@/src/components/DebugPanel";
 import { CreateFileMenu, GeneratedFileCard } from "@/src/components/OfficeFileControls";
 import { useNodeComments } from "@/src/hooks/useNodeComments";
 import { applyChangesToRun } from "@/src/lib/gatekeeperMerge";
-import { ProductTab } from "@/src/components/product/ProductTab";
 import { DEFAULT_PRODUCT_AGENTS } from "@/src/lib/productSpecTypes";
 import type { ProductSpec } from "@/src/lib/productSpecTypes";
 import { wouldExceedHistoryStorageLimits, capSpecForHistoryStorage, SAFE_HISTORY_DOC_BUDGET_CHARS } from "@/src/lib/productSpecTypes";
 import { DEFAULT_SQP_THRESHOLDS, DEFAULT_SQP_PATTERN_LIBRARY, type SqpThresholdConfig, type PatternLibrary, type PatternEntry, type PatternCategory, type PatternMatchType, type PatternSeverity, type ChangelogEntry } from "@/src/lib/specQualityTypes";
 import { isLikelyTextSourceFile, prioritizeCodebasePaths, buildCodebaseDigest, type CodebaseFileEntry } from "@/src/lib/codebaseIngest";
 import { buildProductSpecDocx } from "@/src/lib/productSpecExport";
-import { EnquiryHub } from "@/src/components/briefbridge/EnquiryHub";
-import { PublicIntakePortal } from "@/src/components/briefbridge/PublicIntakePortal";
+
+// ProductTab, EnquiryHub, and PublicIntakePortal are each large, tab-scoped surfaces (the
+// Product tab alone is 3000+ lines) that most sessions never visit — dynamically imported
+// so their code only downloads when the user actually opens that tab/route, instead of
+// being bundled into the initial load unconditionally like every other static import here.
+const ProductTab = lazy(() => import("@/src/components/product/ProductTab").then(m => ({ default: m.ProductTab })));
+const EnquiryHub = lazy(() => import("@/src/components/briefbridge/EnquiryHub").then(m => ({ default: m.EnquiryHub })));
+const PublicIntakePortal = lazy(() => import("@/src/components/briefbridge/PublicIntakePortal").then(m => ({ default: m.PublicIntakePortal })));
 
 // Caps how many agent calls within a single round are actually in flight at once. Firing
 // every panelist's call simultaneously (the previous behaviour) means a 6-agent team sends
@@ -1576,7 +1581,13 @@ export default function App() {
     const match = window.location.pathname.match(/^\/intake\/([^/]+)/);
     return match ? decodeURIComponent(match[1]) : null;
   });
-  if (intakeToken) return <PublicIntakePortal token={intakeToken} />;
+  if (intakeToken) {
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-[#fafafa] dark:bg-slate-950"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
+        <PublicIntakePortal token={intakeToken} />
+      </Suspense>
+    );
+  }
 
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -11399,6 +11410,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                         the workspace panel on large screens, full-width when it's closed. */}
                     <div className={`space-y-6 transition-[padding] duration-300 ease-in-out ${isLeftPanelOpen ? "lg:pl-[344px] xl:pl-[404px]" : "lg:pl-0"}`}>
                     {activeTab === "product" ? (
+                      <Suspense fallback={<div className="flex items-center justify-center py-24"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
                       <ProductTab
                         customTeam={productTeam}
                         setCustomTeam={setProductTeam}
@@ -11434,6 +11446,7 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                         onAddStyleInspirationImage={addStyleInspirationImage}
                         onAddStyleInspirationUrl={addStyleInspirationUrl}
                       />
+                      </Suspense>
                     ) : (
                       <div className="max-w-[1700px] mx-auto space-y-6">
                     {(() => {
@@ -13882,7 +13895,11 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                 </div>
               ) : activeTab === "enquiries" ? (
                 /* Enquiries Tab (BriefBridge) */
-                user && <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} productTeam={productTeam} callAgent={callAgent} />
+                user && (
+                  <Suspense fallback={<div className="flex items-center justify-center py-24"><RefreshCw className="w-8 h-8 animate-spin text-blue-600" /></div>}>
+                    <EnquiryHub userId={user.uid} onPipeToPrompt={handlePipeEnquiryToPrompt} productTeam={productTeam} callAgent={callAgent} />
+                  </Suspense>
+                )
               ) : (
                 /* History Tab */
                 <div className="space-y-6 animate-in fade-in duration-300">
