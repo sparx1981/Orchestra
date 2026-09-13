@@ -2,6 +2,95 @@ import type { ProductSpec, ProductSpecSection, VibeCodingTool } from "./productS
 import { VIBE_CODING_TOOLS } from "./productSpecTypes";
 
 /**
+ * Renders spec.designSystem (Module A) as Markdown body content, no heading of its own —
+ * callers (buildProductSpecMarkdown below, and the docx/rtf/pdf builders in
+ * productSpecExport.ts via getDesignAppendixSections) prepend their own heading so this stays
+ * reusable across every output format's own heading style.
+ */
+export function buildDesignSystemMarkdown(spec: ProductSpec): string {
+  const ds = spec.designSystem;
+  if (!ds) return "";
+  const lines: string[] = [];
+  lines.push(`- **Style:** ${ds.style.name} — ${ds.style.rationale}`);
+  lines.push(`- **Palette:** ${ds.palette.name} — ${ds.palette.rationale}`);
+  lines.push(`- **Typography:** ${ds.typography.name} — ${ds.typography.rationale}`);
+  lines.push(`- **Layout:** ${ds.layout.density} density, ${ds.layout.navPattern} — ${ds.layout.rationale}`);
+  lines.push(ds.motion ? `- **Motion:** ${ds.motion.name} — ${ds.motion.rationale}` : `- **Motion:** disabled for this product`);
+  lines.push(`- **Design Dials used:** Variance ${ds.dials.variance}/10, Motion ${ds.dials.motion}/10, Density ${ds.dials.density}/10`);
+  lines.push("");
+  if (ds.anti_patterns.length > 0) {
+    lines.push(`**Anti-Patterns to Avoid**`);
+    ds.anti_patterns.forEach(a => lines.push(`- ${a}`));
+    lines.push("");
+  }
+  lines.push(ds.rationale);
+  if (ds.surfaceOverrides && ds.surfaceOverrides.length > 0) {
+    lines.push("");
+    lines.push(`**Per-Surface Overrides**`);
+    ds.surfaceOverrides.forEach(o => {
+      lines.push(`- *${o.surfaceName}* (${o.mode}): ${o.rationale || "see per-field overrides"}`);
+    });
+  }
+  return lines.join("\n");
+}
+
+/** Renders spec.designReview (Module B) as Markdown body content — same no-own-heading
+ *  convention as buildDesignSystemMarkdown above. */
+export function buildDesignReviewMarkdown(spec: ProductSpec): string {
+  const review = spec.designReview;
+  if (!review) return "";
+  const lines: string[] = [];
+  lines.push(`**Surface Mode: ${review.mode.charAt(0).toUpperCase()}${review.mode.slice(1)}**`);
+  if (review.modeRationale) lines.push(review.modeRationale);
+  lines.push("");
+  if (review.critiqueFindings.length > 0) {
+    lines.push(`### Critique`);
+    review.critiqueFindings.forEach(f => lines.push(`- ${f}`));
+    lines.push("");
+  }
+  if (review.auditResults.length > 0) {
+    lines.push(`### Audit (UX Guidelines Checklist)`);
+    lines.push(`| Category | Status | Notes |`);
+    lines.push(`| --- | --- | --- |`);
+    review.auditResults.forEach(a => lines.push(`| ${a.category} | ${a.status === "pass" ? "Pass" : "Flag"} | ${a.notes.replace(/\|/g, "/")} |`));
+    lines.push("");
+  }
+  if (review.fixList.length > 0) {
+    lines.push(`### Prioritized Fix List`);
+    review.fixList.forEach((f, i) => lines.push(`${i + 1}. ${f}`));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Appendix sections synthesized from spec.designSystem/designReview, shaped exactly like a
+ * ProductSpecSection so every export builder (Markdown here, and docx/rtf/pdf in
+ * productSpecExport.ts) can render them through the SAME per-section rendering path used for
+ * every other section, rather than a bespoke one-off renderer per format. Neither is a real
+ * persisted ProductSpecSection — they're never added to spec.sections itself.
+ */
+export function getDesignAppendixSections(spec: ProductSpec): Pick<ProductSpecSection, "id" | "heading" | "authorAgentName" | "reviewedByAgentName" | "content">[] {
+  const sections: Pick<ProductSpecSection, "id" | "heading" | "authorAgentName" | "reviewedByAgentName" | "content">[] = [];
+  if (spec.designSystem) {
+    sections.push({
+      id: "appendix_design_system",
+      heading: "Design System",
+      authorAgentName: spec.facilitatorAgentName || "Design Intelligence Agent",
+      content: buildDesignSystemMarkdown(spec),
+    });
+  }
+  if (spec.designReview) {
+    sections.push({
+      id: "appendix_design_review",
+      heading: "Design & UX Review",
+      authorAgentName: "Craft Review Agent",
+      content: buildDesignReviewMarkdown(spec),
+    });
+  }
+  return sections;
+}
+
+/**
  * Formats a complete, high-detail Product Specification into Markdown.
  */
 export function buildProductSpecMarkdown(spec: ProductSpec): string {
@@ -25,7 +114,7 @@ export function buildProductSpecMarkdown(spec: ProductSpec): string {
   lines.push("---");
   lines.push("");
 
-  for (const section of spec.sections) {
+  for (const section of [...spec.sections, ...getDesignAppendixSections(spec)]) {
     lines.push(`## ${section.heading}`);
     lines.push(`*Authored by: ${section.authorAgentName}*`);
     lines.push("");

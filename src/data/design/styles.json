@@ -1,0 +1,191 @@
+[
+  {
+    "id": "minimal_swiss",
+    "name": "Minimal Swiss",
+    "tags": ["minimal", "grid", "editorial", "neutral", "low-variance"],
+    "description": "Strict grid layout, generous whitespace, a single accent color, and type-led hierarchy over decoration. Content is the interface.",
+    "best_for": ["b2b_saas", "docs_help", "portfolio_personal", "finance_dashboard"],
+    "avoid_for": ["consumer_social", "gaming", "kids_edtech"],
+    "anti_patterns": ["Decorative gradients with no functional purpose", "More than one accent color competing for attention", "Dense copy without a clear type scale"]
+  },
+  {
+    "id": "neo_brutalist",
+    "name": "Neo-Brutalist",
+    "tags": ["bold", "asymmetric", "high-variance", "raw", "expressive"],
+    "description": "Thick borders, hard drop shadows, unapologetic color blocks, and intentionally 'undesigned' typography that reads as confident rather than unfinished.",
+    "best_for": ["portfolio_creative", "indie_product", "marketing_landing", "gallery_showcase"],
+    "avoid_for": ["enterprise_admin", "healthcare_portal", "banking_app"],
+    "anti_patterns": ["Applying brutalist chaos to a form-heavy operational tool", "Illegible contrast in the name of 'raw' aesthetics", "No underlying grid at all — brutalism still needs structure to read as intentional"]
+  },
+  {
+    "id": "glassmorphism",
+    "name": "Glassmorphism",
+    "tags": ["translucent", "modern", "layered", "standard-variance"],
+    "description": "Frosted-glass panels (background blur + low-opacity fill + thin light border) floating over a colorful or photographic backdrop.",
+    "best_for": ["consumer_social", "media_streaming", "gaming", "marketing_landing"],
+    "avoid_for": ["b2b_saas", "data_dense_dashboard", "docs_help"],
+    "anti_patterns": ["Blur applied over another blurred layer, killing legibility", "Using it on data-dense tables where borders need to be crisp, not translucent", "Low text contrast against a shifting background"]
+  },
+  {
+    "id": "corporate_memphis_soft",
+    "name": "Soft Corporate Illustrated",
+    "tags": ["friendly", "rounded", "consumer", "standard-variance"],
+    "description": "Rounded corners, pastel-adjacent palettes, and flat illustration used for empty/onboarding states to feel approachable rather than sterile.",
+    "best_for": ["consumer_social", "kids_edtech", "wellness_app", "onboarding_flow"],
+    "avoid_for": ["banking_app", "b2b_saas", "developer_tool"],
+    "anti_patterns": ["Illustration used as filler instead of communicating state/status", "Overly cute copy on a serious action (deleting data, payments)", "Pastel-on-pastel with insufficient contrast for body text"]
+  },
+  {
+    "id": "dense_terminal",
+    "name": "Dense Terminal / Data Grid",
+    "tags": ["dense", "monospace", "utilitarian", "low-variance", "operate"],
+    "description": "Monospace or tabular-figure type, tight row heights, minimal chrome — optimized for scanning many rows of data quickly, not for delight.",
+    "best_for": ["dev_tool", "trading_terminal", "admin_dashboard", "logs_monitoring"],
+    "avoid_for": ["marketing_landing", "consumer_social", "portfolio_creative"],
+    "anti_patterns": ["Adding decorative motion to a screen meant for rapid scanning", "Insufficient row-to-row contrast making tables hard to track by eye", "Icon-only actions with no text label in a tool used by non-power-users"]
+  },
+  {
+    "id": "editorial_serif",
+    "name": "Editorial Serif",
+    "tags": ["reading", "serif", "content-first", "standard-variance"],
+    "description": "Serif display type, a comfortable reading measure (60-75 characters), generous line-height, and restrained UI chrome that gets out of the way of long-form text.",
+    "best_for": ["docs_help", "blog_publication", "news_media", "long_form_content"],
+    "avoid_for": ["trading_terminal", "gaming", "admin_dashboard"],
+    "anti_patterns": ["Full-width body text with no measure constraint", "Sans-serif UI chrome fighting the serif reading type for visual weight", "Justified text without hyphenation, causing ragged word-spacing"]
+  },
+  {
+    "id": "dark_mode_native",
+    "name": "Dark-Mode-Native Pro Tool",
+    "tags": ["dark", "professional", "low-variance", "operate"],
+    "description": "Designed dark-first (not just a dark theme bolted onto a light design) with elevation expressed through subtle surface lightening rather than shadows.",
+    "best_for": ["dev_tool", "creative_tool", "trading_terminal", "admin_dashboard"],
+    "avoid_for": ["kids_edtech", "print_style_docs"],
+    "anti_patterns": ["Pure black backgrounds causing halation/glow around light text", "Reusing light-mode shadow tokens instead of elevation-through-lightness", "Saturated accent colors that vibrate against a dark ground"]
+  },
+  {
+    "id": "playful_maximalist",
+    "name": "Playful Maximalist",
+    "tags": ["bold", "colorful", "high-variance", "expressive", "asymmetric"],
+    "description": "Multiple saturated accent colors, layered shapes, hand-drawn or wobbly elements, and confident type mixing — energy over restraint.",
+    "best_for": ["kids_edtech", "consumer_social", "gaming", "event_marketing"],
+    "avoid_for": ["banking_app", "healthcare_portal", "b2b_saas"],
+    "anti_patterns": ["More than 3-4 competing accent colors on one screen", "Playful chrome around a genuinely high-stakes action (payment, deletion)", "No visual hierarchy — everything shouting at once"]
+  },
+  {
+    "id": "quiet_luxury",
+    "name": "Quiet Luxury",
+    "tags": ["minimal", "premium", "low-variance", "restrained"],
+    "description": "Muted neutral palette, a single refined serif or grotesque, ample whitespace, and understated micro-interactions signaling quality through restraint.",
+    "best_for": ["ecommerce_premium", "portfolio_creative", "gallery_showcase", "hospitality_booking"],
+    "avoid_for": ["gaming", "kids_edtech", "dev_tool"],
+    "anti_patterns": ["Loud CTAs breaking an otherwise restrained palette", "Stock photography that undercuts the premium feel", "Overuse of thin font weights at small sizes, hurting legibility"]
+  },
+  {
+    "id": "brutal_functionalism",
+    "name": "Brutal Functionalism",
+    "tags": ["utilitarian", "dense", "low-variance", "operate"],
+    "description": "System-default-adjacent styling, visible borders and dividers, no unnecessary ornamentation — every pixel earns its place. Common in enterprise back-office tools.",
+    "best_for": ["admin_dashboard", "internal_tool", "b2b_saas", "erp_module"],
+    "avoid_for": ["consumer_social", "marketing_landing", "portfolio_creative"],
+    "anti_patterns": ["Mistaking 'no styling' for 'no design decisions' — spacing and alignment still need a system", "Default browser form controls left unstyled next to custom components, breaking consistency"]
+  },
+  {
+    "id": "gradient_mesh_modern",
+    "name": "Gradient Mesh Modern",
+    "tags": ["modern", "colorful", "standard-variance", "saas"],
+    "description": "Soft multi-color mesh gradients as hero backdrops, paired with clean neutral UI chrome — the current default 'modern SaaS' aesthetic.",
+    "best_for": ["b2b_saas", "marketing_landing", "ai_product", "dev_tool_marketing"],
+    "avoid_for": ["dense_data_dashboard", "docs_help"],
+    "anti_patterns": ["Gradient text with insufficient contrast against its background", "Overusing the gradient inside the product UI itself rather than just marketing surfaces", "Gradients that shift hue enough to imply state (success/error) unintentionally"]
+  },
+  {
+    "id": "retro_futurism",
+    "name": "Retro-Futurism",
+    "tags": ["bold", "expressive", "high-variance", "nostalgic"],
+    "description": "Chunky geometric type, CRT/scanline textures, neon-on-dark palettes, and skeuomorphic nods to 80s/90s computing — used for distinctive brand personality.",
+    "best_for": ["gaming", "music_app", "portfolio_creative", "event_marketing"],
+    "avoid_for": ["b2b_saas", "banking_app", "healthcare_portal"],
+    "anti_patterns": ["Scanline/noise textures reducing text legibility below acceptable contrast", "Applying the aesthetic to data-entry forms where speed matters more than mood"]
+  },
+  {
+    "id": "flat_material",
+    "name": "Flat Material",
+    "tags": ["standard-variance", "systematic", "mobile-first"],
+    "description": "Elevation via layered shadows on flat colored surfaces, rounded rectangles, and a defined type/spacing scale — the mainstream mobile-app default.",
+    "best_for": ["consumer_social", "mobile_utility", "delivery_app", "fitness_app"],
+    "avoid_for": ["editorial_content", "portfolio_creative"],
+    "anti_patterns": ["Shadow stacking on every element regardless of actual elevation meaning", "Overusing FAB (floating action button) pattern for actions that aren't the primary one"]
+  },
+  {
+    "id": "monochrome_technical",
+    "name": "Monochrome Technical",
+    "tags": ["minimal", "low-variance", "technical", "operate"],
+    "description": "Grayscale-first palette with a single functional accent reserved strictly for primary actions and status — nothing competes with the data.",
+    "best_for": ["dev_tool", "analytics_dashboard", "b2b_saas", "admin_dashboard"],
+    "avoid_for": ["consumer_social", "marketing_landing", "kids_edtech"],
+    "anti_patterns": ["Using the single accent color for more than 2-3 purposes, diluting its meaning", "Charts that fall back to arbitrary hues instead of a disciplined grayscale+accent ramp"]
+  },
+  {
+    "id": "warm_organic",
+    "name": "Warm Organic",
+    "tags": ["standard-variance", "friendly", "rounded", "wellness"],
+    "description": "Earthy warm neutrals, soft rounded shapes, textured/grainy backgrounds, and humanist type — evokes craft and care rather than tech-forward slickness.",
+    "best_for": ["wellness_app", "food_recipe", "community_platform", "nonprofit_site"],
+    "avoid_for": ["trading_terminal", "dev_tool", "banking_app"],
+    "anti_patterns": ["Low-contrast warm-on-warm text failing accessibility", "Grain/texture overlays that degrade on low-end displays or slow rendering"]
+  },
+  {
+    "id": "high_contrast_accessible",
+    "name": "High-Contrast Accessible-First",
+    "tags": ["minimal", "low-variance", "accessible", "government"],
+    "description": "Designed from WCAG AA/AAA contrast outward: strong black-on-white or reversed, oversized touch targets, and no reliance on color alone for meaning.",
+    "best_for": ["government_service", "healthcare_portal", "public_information", "civic_tech"],
+    "avoid_for": ["gaming", "portfolio_creative"],
+    "anti_patterns": ["Adding decorative low-contrast elements that undo the accessible base palette", "Icon-only status indicators with no text or pattern fallback"]
+  },
+  {
+    "id": "cinematic_immersive",
+    "name": "Cinematic Immersive",
+    "tags": ["high-variance", "expressive", "experience", "full-bleed"],
+    "description": "Full-bleed imagery/video, oversized display type, minimal UI chrome that recedes so the content itself is the star — used for showcase/portfolio experiences.",
+    "best_for": ["gallery_showcase", "portfolio_creative", "film_media", "architecture_showcase"],
+    "avoid_for": ["b2b_saas", "admin_dashboard", "forms_heavy_app"],
+    "anti_patterns": ["Auto-playing video/motion with no pause control or reduced-motion fallback", "Navigation buried so deep the 'immersive' framing hurts usability"]
+  },
+  {
+    "id": "component_library_default",
+    "name": "Component-Library Default (shadcn-adjacent)",
+    "tags": ["standard-variance", "systematic", "saas", "neutral"],
+    "description": "Neutral gray scale, a single brand accent, 8px spacing grid, subtle 1px borders and small radii — the safe, fast-to-build default for most modern products.",
+    "best_for": ["b2b_saas", "internal_tool", "mvp_prototype", "admin_dashboard"],
+    "avoid_for": ["portfolio_creative", "gallery_showcase", "marketing_landing_hero"],
+    "anti_patterns": ["Shipping the unmodified default palette/spacing as if it were a considered brand decision", "Inconsistent radius values across components from mixing library versions"]
+  },
+  {
+    "id": "skeuomorphic_revival",
+    "name": "Skeuomorphic Revival",
+    "tags": ["standard-variance", "tactile", "expressive"],
+    "description": "Soft shadows, subtle textures, and realistic depth cues (buttons that look pressable) — a reaction against flat design for products wanting tactile warmth.",
+    "best_for": ["music_app", "creative_tool", "consumer_utility"],
+    "avoid_for": ["dense_data_dashboard", "b2b_saas"],
+    "anti_patterns": ["Depth cues so heavy they slow down visual scanning of lists", "Inconsistent light source across shadowed elements"]
+  },
+  {
+    "id": "print_inspired_editorial",
+    "name": "Print-Inspired Editorial Grid",
+    "tags": ["standard-variance", "grid", "editorial", "content-first"],
+    "description": "Multi-column magazine-style grids, pull quotes, and asymmetric image placement adapted to responsive web — for content that benefits from visual pacing.",
+    "best_for": ["news_media", "blog_publication", "case_study_page", "portfolio_creative"],
+    "avoid_for": ["dense_data_dashboard", "forms_heavy_app"],
+    "anti_patterns": ["Multi-column layouts that don't collapse sensibly on mobile", "Pull quotes breaking reading flow with no clear re-entry point"]
+  },
+  {
+    "id": "ai_native_conversational",
+    "name": "AI-Native Conversational",
+    "tags": ["standard-variance", "modern", "ai_product", "chat"],
+    "description": "Chat-first layout with a persistent input, streaming-text affordances, subtle 'thinking' states, and generous whitespace around message bubbles.",
+    "best_for": ["ai_product", "chatbot", "assistant_app", "dev_tool"],
+    "avoid_for": ["dense_data_dashboard", "gallery_showcase"],
+    "anti_patterns": ["No visible distinction between streaming and completed responses", "Chat input that scrolls out of view on long conversations instead of staying anchored"]
+  }
+]

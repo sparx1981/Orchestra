@@ -21,6 +21,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from "pdf
 import type { Paragraph as ParagraphT, Table as TableT } from "docx";
 import type { ProductSpec } from "./productSpecTypes";
 import { VIBE_CODING_TOOLS } from "./productSpecTypes";
+import { getDesignAppendixSections } from "./productSpecGenerator";
 
 // ---------------------------------------------------------------------------
 // Shared brand style — one source of truth for all three renderers
@@ -398,7 +399,7 @@ export async function buildProductSpecDocx(spec: ProductSpec): Promise<Blob> {
     });
   };
 
-  for (const section of spec.sections) {
+  for (const section of [...spec.sections, ...getDesignAppendixSections(spec)]) {
     children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 360, after: 120 }, children: [new TextRun({ text: section.heading, font: "Arial", bold: true, color: BRAND.navy, size: 36 })] }));
     children.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, color: BRAND.blue, size: 12, space: 1 } }, spacing: { after: 200, before: 0 } }));
     children.push(
@@ -558,7 +559,7 @@ export function buildProductSpecRtf(spec: ProductSpec): string {
   lines.push("\\page");
 
   // --- Sections ---
-  for (const section of spec.sections) {
+  for (const section of [...spec.sections, ...getDesignAppendixSections(spec)]) {
     lines.push(`\\fs36\\b\\cf${RTF_CF.navy} ${escapeRtf(section.heading)}\\b0\\par`);
     lines.push(`\\brdrb\\brdrs\\brdrw15\\brdrcf${RTF_CF.blue}\\par\\pard\\par`);
     const caption = `Drafted by ${section.authorAgentName}${section.reviewedByAgentName ? ` · Reviewed by ${section.reviewedByAgentName}` : ""}`;
@@ -774,7 +775,7 @@ export async function buildProductSpecPdf(spec: ProductSpec): Promise<Uint8Array
   cursorY = CONTENT_TOP;
 
   // --- Sections ---
-  for (const section of spec.sections) {
+  for (const section of [...spec.sections, ...getDesignAppendixSections(spec)]) {
     ensureSpace(50);
     drawParagraph(section.heading, boldFont, 16, { color: navy });
     drawRule(blue, 1.2, 4, 10);

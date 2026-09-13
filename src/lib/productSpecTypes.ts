@@ -93,6 +93,67 @@ export interface ProductSpecPreflightQuestion {
 
 export type ProductGenerationDepth = "quick" | "thorough";
 
+// Module A — Design Intelligence. One DesignSystem per ProductSpec, produced by the Design
+// Intelligence Agent (see designIntelligencePrompt.ts) BEFORE the drafting agents run, then
+// handed to them (especially the Design Architect / ux_lead) as concrete tokens to ground
+// their sections in, rather than each agent inventing its own vague "modern, clean" vibe.
+export interface DesignSystemChoice {
+  id: string;
+  name: string;
+  rationale: string; // one sentence tying this choice to the product type/audience
+}
+
+export interface DesignSystem {
+  generatedAt: string;
+  style: DesignSystemChoice;
+  palette: DesignSystemChoice;
+  typography: DesignSystemChoice;
+  layout: { density: string; navPattern: string; rationale: string };
+  // Absent when motion was effectively disabled (dial at its lowest) rather than the agent
+  // simply forgetting to choose one.
+  motion?: DesignSystemChoice;
+  anti_patterns: string[];
+  rationale: string; // overall one-paragraph justification tying the whole system together
+  dials: { variance: number; motion: number; density: number };
+  // Per-surface divergence from the base system above (e.g. a marketing landing page inside
+  // an otherwise "operate"-mode product) — optional and empty for the common case of one
+  // uniform design system across the whole spec.
+  surfaceOverrides?: DesignSystemSurfaceOverride[];
+}
+
+// Module B — Craft Review. Which review priorities apply to this spec's product surface —
+// see the Craft Review Agent (craftReviewPrompt.ts). This app specs one product per
+// generation, so mode is a single field on the whole ProductSpec rather than per-surface;
+// surfaceOverrides on DesignSystem below is the one place a spec can still express
+// per-surface design divergence without needing a second SurfaceMode field.
+export type SurfaceMode = "persuade" | "operate" | "read" | "experience";
+
+export interface DesignSystemSurfaceOverride {
+  surfaceId: string;
+  surfaceName: string;
+  mode: SurfaceMode;
+  style?: DesignSystemChoice;
+  palette?: DesignSystemChoice;
+  typography?: DesignSystemChoice;
+  layout?: { density: string; navPattern: string; rationale: string };
+  motion?: DesignSystemChoice;
+  rationale?: string;
+}
+
+export interface DesignReviewAuditEntry {
+  category: string;
+  status: "pass" | "flag";
+  notes: string;
+}
+
+export interface DesignReviewResult {
+  mode: SurfaceMode;
+  modeRationale: string;
+  critiqueFindings: string[];
+  auditResults: DesignReviewAuditEntry[];
+  fixList: string[];
+}
+
 // Firestore documents cap at ~1MB (1,048,576 bytes). Previously this was enforced as a flat
 // 40,000-character-per-section / 2,000-character-per-revision cap, applied unconditionally —
 // which silently discarded full-fidelity content for even moderately detailed specs nowhere
@@ -240,6 +301,17 @@ export interface ProductSpec {
   // a field on the SAME ProductSpec (rather than a separate history entry) so the two can
   // never drift apart or end up orphaned from one another.
   clientFacingSpec?: ClientFacingSpec;
+  // Module A — the reasoned design system generated before drafting began (see
+  // designIntelligencePrompt.ts) and threaded into the drafting agents' context. Optional so
+  // specs generated before this feature existed keep loading correctly.
+  designSystem?: DesignSystem;
+  // Module B — the automatic post-drafting design/UX review pass (see craftReviewPrompt.ts).
+  designReview?: DesignReviewResult;
+  // The surface mode the Craft Review Agent classified this spec as (see SurfaceMode) —
+  // duplicated onto the spec itself (not just nested in designReview) so the mode-correction
+  // UI control can read/write it directly without reaching into the review result.
+  mode?: SurfaceMode;
+  modeRationale?: string;
 }
 
 export const VIBE_CODING_TOOLS: VibeCodingToolInfo[] = [

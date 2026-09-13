@@ -1,11 +1,14 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { CustomAgent, KnowledgeFile } from "@/src/App";
-import type { ProductSpec, ProductSpecSection, VibeCodingTool, ProductGenerationDepth, ProductSpecPreflightQuestion, ClientFacingSpecSection } from "@/src/lib/productSpecTypes";
+import type { ProductSpec, ProductSpecSection, VibeCodingTool, ProductGenerationDepth, ProductSpecPreflightQuestion, ClientFacingSpecSection, SurfaceMode, DesignSystem, DesignReviewResult } from "@/src/lib/productSpecTypes";
 import {
   VIBE_CODING_TOOLS,
   DEFAULT_PRODUCT_AGENTS,
   wouldExceedHistoryStorageLimits,
 } from "@/src/lib/productSpecTypes";
+import { DEFAULT_DESIGN_DIALS, type DesignDials } from "@/src/lib/designIntelligence";
+import { generateDesignSystem } from "@/src/lib/designIntelligencePrompt";
+import { runCraftReview, buildModeClassificationInstruction, parseModeClassificationResponse } from "@/src/lib/craftReviewPrompt";
 import {
   buildProductSpecMarkdown,
   buildClientFacingSpecMarkdown,
@@ -194,6 +197,17 @@ export function ProductTab({
   // Generation depth: "thorough" runs the full draft → cross-review → revise → consistency
   // sweep pipeline; "quick" stops after drafting for a fast first pass.
   const [generationDepth, setGenerationDepth] = useState<ProductGenerationDepth>("quick");
+
+  // Design Dials (Module A) — Variance/Motion/Density, 1-10, defaulting to 5 (mid/standard)
+  // so generation never requires touching them. Read once at the start of runSpecGeneration;
+  // changing them mid-generation has no effect on the run already in flight.
+  const [designDials, setDesignDials] = useState<DesignDials>(DEFAULT_DESIGN_DIALS);
+  // "Regenerate Design System" (Module A) must be an explicit user action, never silent —
+  // tracks in-flight state for that single button separately from the main generation flag.
+  const [isRegeneratingDesignSystem, setIsRegeneratingDesignSystem] = useState(false);
+  // Mode correction (Module B): user can override the auto-classified SurfaceMode after
+  // generation, which re-triggers only the Craft Review pass, not the whole spec.
+  const [isRerunningCraftReview, setIsRerunningCraftReview] = useState(false);
 
   // New build vs. update to something already in production — a structural choice that
   // reframes every section's instructions (see runSpecGeneration's projectTypeContext), so
@@ -739,6 +753,35 @@ Output strictly raw JSON without markdown code fences.`;
         logDebug("warn", "Meta parsing used fallback", e);
       }
 
+      // Module A — Design Intelligence Agent: runs BEFORE any drafting agent, on the Lead
+      // Architect, so its output (a concrete design system, not a vague vibe) is available
+      // as context for every section below — especially the UI/UX section. A failure here
+      // is non-fatal: the rest of the pipeline proceeds without a design system rather than
+      // aborting the whole generation over what is, deliberately, an additive feature.
+      setCurrentPhase(`${leadAgent.name} is generating the Design System (Design Intelligence pass)...`);
+      let designSystem: DesignSystem | undefined;
+      try {
+        designSystem = await generateDesignSystem(
+          { appConcept: parsedMeta.appConcept, title: parsedMeta.title, dials: designDials },
+          leadAgent,
+          callAgent,
+          signal
+        );
+      } catch (e) {
+        logDebug("warn", "Design Intelligence pass failed — proceeding without a generated design system", e);
+      }
+      // Module B — populated after drafting (+ review, when thorough) completes below; kept
+      // as mutable outer-scope vars, like designSystem above, so pushLiveSpec (defined next)
+      // picks up whatever the latest value is at each call rather than needing its own
+      // separate push path.
+      let mode: SurfaceMode | undefined;
+      let modeRationale: string | undefined;
+      let designReview: DesignReviewResult | undefined;
+
+      const designSystemContext = designSystem
+        ? `\n\n🎨 GENERATED DESIGN SYSTEM (produced by the Design Intelligence Agent — ground the Design Vibe in the Overview section and every visual detail in the UI/UX section in THESE concrete choices, not a generic aesthetic):\nStyle: ${designSystem.style.name} — ${designSystem.style.rationale}\nPalette: ${designSystem.palette.name} — ${designSystem.palette.rationale} (background ${(designSystem.palette as any).colors?.background || ""}, primary ${(designSystem.palette as any).colors?.primary || ""})\nTypography: ${designSystem.typography.name} — ${designSystem.typography.rationale}\nLayout: ${designSystem.layout.density} density, ${designSystem.layout.navPattern} — ${designSystem.layout.rationale}${designSystem.motion ? `\nMotion: ${designSystem.motion.name} — ${designSystem.motion.rationale}` : "\nMotion: disabled for this product"}\nAnti-patterns to avoid: ${designSystem.anti_patterns.join("; ") || "none listed"}`
+        : "";
+
       // Live incremental spec: pushed to `spec` state after every section finishes drafting
       // or reviewing (not on every intermediate review round — that would mean dozens of
       // updates per section), so the screen shows real progress as it happens and, just as
@@ -783,6 +826,10 @@ Output strictly raw JSON without markdown code fences.`;
           consistencyNotes: notesRef.length > 0 ? [...notesRef] : undefined,
           projectType,
           groundedOnExistingCodebase: existingCodebaseFile?.name,
+          designSystem,
+          designReview,
+          mode,
+          modeRationale,
         });
       };
       pushLiveSpec(); // shows the title/subtitle immediately, sections empty for now
@@ -947,7 +994,7 @@ Synthesize the entire team's agreements — including the File Manifest — into
               .join("\n\n")}`
           : "";
 
-        const promptBody = `TASK:\n${prompt}\n${kbContext}\n\nAPP TITLE: ${parsedMeta.title}\nCONCEPT: ${parsedMeta.appConcept}\nTARGET AI TOOL: ${toolInfo.label}${priorAgreements}`;
+        const promptBody = `TASK:\n${prompt}\n${kbContext}${designSystemContext}\n\nAPP TITLE: ${parsedMeta.title}\nCONCEPT: ${parsedMeta.appConcept}\nTARGET AI TOOL: ${toolInfo.label}${priorAgreements}`;
         const rawContent = await callAgent(cfg.agent, promptBody, cfg.instruction + draftingQuestionsAddendum, signal);
 
         const sectionId = `sec_${Date.now()}_${i}`;
@@ -1182,6 +1229,35 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
         }
       }
 
+      // Module B — Craft Review Agent: runs automatically after drafting (and, in "thorough"
+      // mode, the cross-agent review + consistency sweep) complete — never on-request, and
+      // never before every section has its final content. Non-fatal on failure, same as
+      // Module A above: the review is additive, not a gate on the spec being usable.
+      if (!signal.aborted && draftedSections.length > 0) {
+        try {
+          setCurrentPhase(`${leadAgent.name} is classifying the product's surface mode (Design & UX Review)...`);
+          const classifyRaw = await callAgent(leadAgent, "", buildModeClassificationInstruction(parsedMeta.appConcept, parsedMeta.title), signal);
+          const classified = parseModeClassificationResponse(classifyRaw);
+          mode = classified.mode;
+          modeRationale = classified.modeRationale;
+          pushLiveSpec();
+
+          const reviewer = qaAgent; // mirrors the existing cross-agent review pass's QA/Vibe Coding Specialist role
+          designReview = await runCraftReview(
+            { sections: draftedSections, title: parsedMeta.title },
+            mode,
+            modeRationale,
+            reviewer,
+            callAgent,
+            signal,
+            { onPhase: setCurrentPhase }
+          );
+          pushLiveSpec();
+        } catch (e) {
+          logDebug("warn", "Craft Review pass (Design & UX Review) failed — the spec is still complete without it", e);
+        }
+      }
+
       // Final push: identical in shape to every incremental one above, this just guarantees
       // the very last state (including any consistency-sweep notes) is what's on screen and
       // what gets saved once generation is complete.
@@ -1201,6 +1277,61 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
       setIsGenerating(false);
       setCurrentPhase("");
       abortControllerRef.current = null;
+    }
+  };
+
+  // "Regenerate Design System" — an explicit, separate user action from regenerating any
+  // individual section (see the constraint in the Product spec doc: never silently overwrite
+  // an existing design system). Re-runs only the Module A retrieval + agent call against the
+  // spec's already-settled title/concept and the CURRENT Design Dials, then threads the new
+  // design system into every section's stored content is deliberately NOT done here — that
+  // would silently rewrite drafted prose the user may have already reviewed/edited; the new
+  // DesignSystem simply becomes available for the next full/partial regeneration or export.
+  const handleRegenerateDesignSystem = async () => {
+    if (!spec || isRegeneratingDesignSystem) return;
+    setIsRegeneratingDesignSystem(true);
+    try {
+      const { leadAgent } = pickAgentRoles();
+      const newDesignSystem = await generateDesignSystem(
+        { appConcept: spec.appConcept, title: spec.title, dials: designDials },
+        leadAgent,
+        callAgent
+      );
+      setSpec({ ...spec, designSystem: newDesignSystem });
+      logDebug("info", "Design System regenerated", `${newDesignSystem.style.name} / ${newDesignSystem.palette.name} / ${newDesignSystem.typography.name}`);
+    } catch (e: any) {
+      logDebug("error", "Failed to regenerate the Design System", e?.message || e);
+    } finally {
+      setIsRegeneratingDesignSystem(false);
+    }
+  };
+
+  // Mode correction (Module B): the user disagrees with the auto-classified SurfaceMode and
+  // picks a different one — re-triggers ONLY the Craft Review pass (critique/audit/polish
+  // against the new mode's priorities), never the whole spec, since drafted content itself
+  // doesn't need to change just because its review lens does.
+  const handleChangeSurfaceMode = async (newMode: SurfaceMode) => {
+    if (!spec || isRerunningCraftReview) return;
+    setIsRerunningCraftReview(true);
+    try {
+      const { qaAgent } = pickAgentRoles();
+      const modeRationaleOverride = "Manually set by the product owner, overriding the auto-classification.";
+      const newReview = await runCraftReview(
+        { sections: spec.sections, title: spec.title },
+        newMode,
+        modeRationaleOverride,
+        qaAgent,
+        callAgent,
+        undefined,
+        { onPhase: setCurrentPhase }
+      );
+      setSpec({ ...spec, mode: newMode, modeRationale: modeRationaleOverride, designReview: newReview });
+      logDebug("info", `Design & UX Review re-run for mode "${newMode}"`, `${newReview.fixList.length} fix(es) listed`);
+    } catch (e: any) {
+      logDebug("error", "Failed to re-run the Design & UX Review for the new mode", e?.message || e);
+    } finally {
+      setIsRerunningCraftReview(false);
+      setCurrentPhase("");
     }
   };
 
@@ -1539,6 +1670,36 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
                 )}
               </div>
             )}
+          </div>
+
+          {/* Design Dials (Module A) — Variance / Motion / Density, 1-10, default 5. Shown
+              during setup so the user can bias the generated Design System before it's ever
+              built; left untouched, generation proceeds with the mid/standard defaults. */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+            {([
+              { key: "variance" as const, label: "Variance", hint: "Minimal → Bold" },
+              { key: "motion" as const, label: "Motion", hint: "Subtle → Complex" },
+              { key: "density" as const, label: "Density", hint: "Spacious → Dense" },
+            ]).map(dial => (
+              <div key={dial.key} className="flex items-center gap-2 flex-1 min-w-[140px]">
+                <label htmlFor={`dial-${dial.key}`} className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap w-14">
+                  {dial.label}
+                </label>
+                <input
+                  id={`dial-${dial.key}`}
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={designDials[dial.key]}
+                  disabled={isGenerating}
+                  onChange={e => setDesignDials(prev => ({ ...prev, [dial.key]: Number(e.target.value) }))}
+                  title={dial.hint}
+                  className="flex-1 accent-blue-600"
+                />
+                <span className="text-[11px] font-mono text-slate-400 w-4 text-right">{designDials[dial.key]}</span>
+              </div>
+            ))}
           </div>
 
           {/* Selected Tool Tagline helper */}
@@ -2094,6 +2255,121 @@ Redraft ONLY this section's content in Markdown. Do not restate the section head
               </div>
             );
           })()}
+
+          {/* Module A/B display: the generated Design System and the automatic Design & UX
+              Review. Both are optional (older specs, or a spec whose Design Intelligence/
+              Craft Review pass failed non-fatally, simply omit them) rather than required. */}
+          {!isGenerating && spec.designSystem && (
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-card space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-bold flex items-center gap-2 text-slate-800 dark:text-slate-100">
+                  <Sparkles className="w-4 h-4 text-blue-500" /> Design System
+                </h3>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRegenerateDesignSystem}
+                  disabled={isRegeneratingDesignSystem || isGenerating}
+                  className="h-7 text-xs gap-1.5"
+                  title="Regenerates the Design System from the current Design Dials — never happens automatically."
+                >
+                  {isRegeneratingDesignSystem ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  Regenerate Design System
+                </Button>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3 text-xs">
+                <div className="space-y-1">
+                  <p className="font-semibold text-slate-700 dark:text-slate-200">Style: {spec.designSystem.style.name}</p>
+                  <p className="text-slate-500 dark:text-slate-400">{spec.designSystem.style.rationale}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold text-slate-700 dark:text-slate-200">Palette: {spec.designSystem.palette.name}</p>
+                  <p className="text-slate-500 dark:text-slate-400">{spec.designSystem.palette.rationale}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold text-slate-700 dark:text-slate-200">Typography: {spec.designSystem.typography.name}</p>
+                  <p className="text-slate-500 dark:text-slate-400">{spec.designSystem.typography.rationale}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold text-slate-700 dark:text-slate-200">Layout: {spec.designSystem.layout.density} · {spec.designSystem.layout.navPattern}</p>
+                  <p className="text-slate-500 dark:text-slate-400">{spec.designSystem.layout.rationale}</p>
+                </div>
+                {spec.designSystem.motion && (
+                  <div className="space-y-1">
+                    <p className="font-semibold text-slate-700 dark:text-slate-200">Motion: {spec.designSystem.motion.name}</p>
+                    <p className="text-slate-500 dark:text-slate-400">{spec.designSystem.motion.rationale}</p>
+                  </div>
+                )}
+              </div>
+              {spec.designSystem.anti_patterns.length > 0 && (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">Avoid: </span>
+                  {spec.designSystem.anti_patterns.join("; ")}
+                </p>
+              )}
+              <p className="text-xs text-slate-600 dark:text-slate-300 italic">{spec.designSystem.rationale}</p>
+            </div>
+          )}
+
+          {!isGenerating && spec.designReview && (
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-card space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-bold flex items-center gap-2 text-slate-800 dark:text-slate-100">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Design & UX Review
+                </h3>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="surface-mode-select" className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">Mode:</label>
+                  <select
+                    id="surface-mode-select"
+                    value={spec.designReview.mode}
+                    disabled={isRerunningCraftReview}
+                    onChange={e => handleChangeSurfaceMode(e.target.value as SurfaceMode)}
+                    className="text-xs font-semibold bg-slate-100 dark:bg-slate-800 rounded-lg px-2 py-1 border border-slate-200 dark:border-slate-700"
+                    title="Correcting this re-runs only the Design & UX Review, not the whole spec"
+                  >
+                    <option value="persuade">Persuade</option>
+                    <option value="operate">Operate</option>
+                    <option value="read">Read</option>
+                    <option value="experience">Experience</option>
+                  </select>
+                  {isRerunningCraftReview && <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />}
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{spec.designReview.modeRationale}</p>
+
+              {spec.designReview.critiqueFindings.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Critique</p>
+                  <ul className="text-xs text-slate-600 dark:text-slate-300 list-disc pl-4 space-y-0.5">
+                    {spec.designReview.critiqueFindings.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {spec.designReview.auditResults.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Audit (UX Guidelines Checklist)</p>
+                  <div className="grid sm:grid-cols-2 gap-1.5">
+                    {spec.designReview.auditResults.map((a, i) => (
+                      <div key={i} className={`flex items-start gap-1.5 text-xs px-2 py-1 rounded-lg ${a.status === "pass" ? "bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400" : "bg-amber-50/60 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400"}`}>
+                        <span className="font-semibold capitalize whitespace-nowrap">{a.category.replace(/_/g, " ")}:</span>
+                        <span className="text-slate-600 dark:text-slate-300">{a.notes}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {spec.designReview.fixList.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Prioritized Fix List</p>
+                  <ol className="text-xs text-slate-600 dark:text-slate-300 list-decimal pl-4 space-y-0.5">
+                    {spec.designReview.fixList.map((f, i) => <li key={i}>{f}</li>)}
+                  </ol>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Storage-limit warning: this spec is large enough that Chat History would trim
               some of it (old section content / superseded revisions) on save — see

@@ -1,0 +1,14 @@
+[
+  { "id": "qb_touch_target_min", "rule": "Interactive touch targets must be at least 44x44px (iOS) / 48x48dp (Android/Material), including padding — not just the visible glyph.", "category": "touch_targets" },
+  { "id": "qb_contrast_min", "rule": "Body text must meet WCAG AA contrast (4.5:1 for normal text, 3:1 for large text ≥18px/14px-bold) against its background in every stated color mode.", "category": "accessibility" },
+  { "id": "qb_no_icon_only_unlabeled", "rule": "No icon-only interactive control without an accessible label (visible text, aria-label, or tooltip-on-focus) — an icon alone is not self-explanatory to all users.", "category": "accessibility" },
+  { "id": "qb_reduced_motion_fallback", "rule": "Any non-trivial motion (standard or complex tier) must have a reduced-motion fallback (instant or near-instant transition) honoring prefers-reduced-motion.", "category": "motion" },
+  { "id": "qb_color_not_sole_indicator", "rule": "Status/meaning must never be conveyed by color alone — pair with icon, text label, or pattern for colorblind and low-vision users.", "category": "accessibility" },
+  { "id": "qb_focus_visible", "rule": "Every interactive element must have a visible keyboard focus state distinct from hover state — never remove focus outlines without a replacement.", "category": "accessibility" },
+  { "id": "qb_loading_state_required", "rule": "Any action taking longer than ~300ms must show a loading/pending state — never leave the UI silently unresponsive.", "category": "feedback" },
+  { "id": "qb_error_state_actionable", "rule": "Every error state must state what went wrong in plain language and offer a concrete next action (retry, contact support, go back) — never a bare error code alone.", "category": "feedback" },
+  { "id": "qb_destructive_confirm", "rule": "Destructive or irreversible actions (delete, cancel subscription, overwrite) require an explicit confirmation step naming what will be lost.", "category": "safety" },
+  { "id": "qb_responsive_no_horizontal_scroll", "rule": "No unintended horizontal scroll on the page body at any target viewport width down to 375px — only deliberately scrollable regions (tables, carousels) may scroll horizontally.", "category": "responsive" },
+  { "id": "qb_form_label_required", "rule": "Every form input has a visible, associated label — placeholder text alone never substitutes for a label.", "category": "forms" },
+  { "id": "qb_empty_state_present", "rule": "Every list/collection view defines an explicit empty state with guidance on what to do next — never a blank screen when there's no data yet.", "category": "content" }
+]

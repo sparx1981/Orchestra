@@ -1,0 +1,402 @@
+[
+  {
+    "id": "ux_a11y_1",
+    "category": "accessibility",
+    "priority": 1,
+    "impact": "CRITICAL",
+    "must": "Meet WCAG AA contrast ratios (4.5:1 normal text, 3:1 large text/UI components) in every stated color mode.",
+    "avoid": "Shipping a palette validated only in the designer's own light-mode preview, never checked against dark mode or actual small text sizes."
+  },
+  {
+    "id": "ux_a11y_2",
+    "category": "accessibility",
+    "priority": 1,
+    "impact": "CRITICAL",
+    "must": "Give every interactive element a visible, distinct keyboard focus indicator.",
+    "avoid": "Removing default focus outlines via CSS reset without supplying a replacement."
+  },
+  {
+    "id": "ux_a11y_3",
+    "category": "accessibility",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Provide text alternatives (alt text, aria-label) for meaningful non-text content.",
+    "avoid": "Decorative images and meaningful icons treated identically, with either both or neither getting alt text."
+  },
+  {
+    "id": "ux_a11y_4",
+    "category": "accessibility",
+    "priority": 2,
+    "impact": "HIGH",
+    "must": "Ensure logical, linear tab order matches the visual reading order.",
+    "avoid": "Using positive tabindex values or CSS reordering that visually reorders content without reordering the DOM/tab sequence."
+  },
+  {
+    "id": "ux_a11y_5",
+    "category": "accessibility",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Support text resizing up to 200% without loss of content or functionality.",
+    "avoid": "Fixed-height containers that clip text when the user increases browser font size."
+  },
+  {
+    "id": "ux_responsive_1",
+    "category": "responsive",
+    "priority": 1,
+    "impact": "CRITICAL",
+    "must": "Design and verify layouts at a genuine mobile width (375px) as a first-class breakpoint, not an afterthought scaled down from desktop.",
+    "avoid": "A desktop-only layout with everything simply shrunk, producing illegibly small text and cramped touch targets."
+  },
+  {
+    "id": "ux_responsive_2",
+    "category": "responsive",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Let content reflow (wrap, stack) at narrow widths rather than triggering unintended horizontal scroll.",
+    "avoid": "Fixed-width elements or `min-width` values wider than the viewport causing the whole page to scroll sideways."
+  },
+  {
+    "id": "ux_responsive_3",
+    "category": "responsive",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Use relative units (rem, %, fr) for layout and type sizing rather than hard pixel values throughout.",
+    "avoid": "Pixel-locked component widths that don't adapt across the full range of supported viewports."
+  },
+  {
+    "id": "ux_responsive_4",
+    "category": "responsive",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Collapse multi-column data tables to a stacked or horizontally-scrollable pattern on narrow screens.",
+    "avoid": "A 10-column table rendered unchanged at 375px width, forcing the whole page to scroll."
+  },
+  {
+    "id": "ux_responsive_5",
+    "category": "responsive",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Test and specify tablet/mid-width (768-1024px) behavior explicitly, not just mobile and desktop extremes.",
+    "avoid": "A layout that jumps awkwardly between a mobile stack and a desktop grid with no considered mid-point."
+  },
+  {
+    "id": "ux_perf_1",
+    "category": "performance",
+    "priority": 1,
+    "impact": "CRITICAL",
+    "must": "Show a loading/pending state for any operation likely to exceed ~300ms.",
+    "avoid": "A UI that appears frozen with no feedback while a network call or heavy computation runs."
+  },
+  {
+    "id": "ux_perf_2",
+    "category": "performance",
+    "priority": 2,
+    "impact": "HIGH",
+    "must": "Use skeleton loaders or optimistic UI for predictable content shapes rather than a blank screen or spinner-only wait.",
+    "avoid": "A full-screen spinner for a view whose eventual layout is already known, wasting the wait with no context."
+  },
+  {
+    "id": "ux_perf_3",
+    "category": "performance",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Paginate, virtualize, or lazy-load long lists rather than rendering everything at once.",
+    "avoid": "Rendering thousands of DOM nodes for a single unbounded list with no windowing."
+  },
+  {
+    "id": "ux_perf_4",
+    "category": "performance",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Defer loading of below-the-fold images and non-critical assets.",
+    "avoid": "Eagerly loading every image on a long page regardless of scroll position."
+  },
+  {
+    "id": "ux_perf_5",
+    "category": "performance",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Debounce or throttle expensive handlers tied to high-frequency events (scroll, resize, keystroke-triggered search).",
+    "avoid": "Firing a full re-render or network request on every single keystroke or scroll pixel."
+  },
+  {
+    "id": "ux_consist_1",
+    "category": "consistency",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Use one consistent spacing scale (e.g. 4/8px increments) across the entire product.",
+    "avoid": "Arbitrary one-off margin/padding values that don't align to any shared scale, causing visual drift between screens."
+  },
+  {
+    "id": "ux_consist_2",
+    "category": "consistency",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Reuse the same component for the same semantic purpose everywhere (one button style per priority tier, one card pattern per content type).",
+    "avoid": "Multiple visually-different buttons or cards serving the identical role in different parts of the product."
+  },
+  {
+    "id": "ux_consist_3",
+    "category": "consistency",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Apply the same interaction pattern for the same gesture everywhere (e.g. swipe always means the same thing across the app).",
+    "avoid": "The same gesture triggering different, contradictory actions depending on which screen the user is on."
+  },
+  {
+    "id": "ux_consist_4",
+    "category": "consistency",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Keep terminology consistent for the same concept across every screen and every piece of copy.",
+    "avoid": "Calling the same entity a 'Project' on one screen and a 'Workspace' on another."
+  },
+  {
+    "id": "ux_consist_5",
+    "category": "consistency",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Apply the chosen border-radius, shadow, and elevation tokens uniformly rather than per-component judgment calls.",
+    "avoid": "Mixing sharp and heavily-rounded corners across sibling components with no systematic reason."
+  },
+  {
+    "id": "ux_nav_1",
+    "category": "navigation",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Make the current location in the navigation always visually clear (active state, breadcrumb, highlighted tab).",
+    "avoid": "A nav bar with no indication of which section the user is currently in."
+  },
+  {
+    "id": "ux_nav_2",
+    "category": "navigation",
+    "priority": 2,
+    "impact": "HIGH",
+    "must": "Keep primary navigation to a small, stable set of top-level destinations (roughly 5-7 max for tab/rail patterns).",
+    "avoid": "A primary nav that grows unbounded as features are added, forcing overflow menus for core destinations."
+  },
+  {
+    "id": "ux_nav_3",
+    "category": "navigation",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Ensure every screen has a clear, obvious way back (browser back, explicit back button, or breadcrumb) \u2014 no dead ends.",
+    "avoid": "Modal or drill-down flows that trap the user with no visible exit."
+  },
+  {
+    "id": "ux_nav_4",
+    "category": "navigation",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Make deep-linkable views actually reflect their state in the URL where the platform supports it (web).",
+    "avoid": "A multi-step or filtered view whose URL never changes, making it impossible to share or reload a specific state."
+  },
+  {
+    "id": "ux_nav_5",
+    "category": "navigation",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Provide a visible search entry point once content volume passes roughly a screenful.",
+    "avoid": "Forcing users to scroll through a long unstructured list with no way to search or filter."
+  },
+  {
+    "id": "ux_forms_1",
+    "category": "forms",
+    "priority": 1,
+    "impact": "CRITICAL",
+    "must": "Give every input a visible, persistently-associated label (not placeholder-only).",
+    "avoid": "Placeholder text used as the only label, which disappears the moment the user starts typing."
+  },
+  {
+    "id": "ux_forms_2",
+    "category": "forms",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Validate inline, as close to the offending field as possible, with a specific message.",
+    "avoid": "A single generic 'form has errors' banner at the top with no indication of which fields or why."
+  },
+  {
+    "id": "ux_forms_3",
+    "category": "forms",
+    "priority": 2,
+    "impact": "HIGH",
+    "must": "Preserve user-entered data across a failed submit or navigation, never silently discard it.",
+    "avoid": "A failed submission that clears the form, forcing the user to re-enter everything."
+  },
+  {
+    "id": "ux_forms_4",
+    "category": "forms",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Mark required vs. optional fields explicitly and consistently (pick one convention, apply everywhere).",
+    "avoid": "Inconsistent or absent required/optional marking that forces guesswork or a failed submit to discover."
+  },
+  {
+    "id": "ux_forms_5",
+    "category": "forms",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Match input type/keyboard to the expected data (numeric keypad for phone numbers, email keyboard for email) on mobile.",
+    "avoid": "A generic text keyboard for every field regardless of the data type expected."
+  },
+  {
+    "id": "ux_feedback_1",
+    "category": "feedback_error_states",
+    "priority": 1,
+    "impact": "CRITICAL",
+    "must": "State what went wrong in plain language and offer a concrete next step for every error.",
+    "avoid": "Raw error codes, stack traces, or a bare 'Something went wrong' with no path forward."
+  },
+  {
+    "id": "ux_feedback_2",
+    "category": "feedback_error_states",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Confirm the outcome of every user-initiated action (saved, sent, deleted) with a visible acknowledgment.",
+    "avoid": "An action that silently succeeds or fails with zero visible confirmation either way."
+  },
+  {
+    "id": "ux_feedback_3",
+    "category": "feedback_error_states",
+    "priority": 2,
+    "impact": "HIGH",
+    "must": "Require explicit confirmation, naming what will be affected, before any destructive or irreversible action.",
+    "avoid": "A single-click delete with no confirmation step, especially for bulk or irreversible operations."
+  },
+  {
+    "id": "ux_feedback_4",
+    "category": "feedback_error_states",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Distinguish system errors (retry-able) from user errors (fixable input) in both tone and recovery action offered.",
+    "avoid": "Treating a network timeout and a validation failure with the identical generic error message."
+  },
+  {
+    "id": "ux_feedback_5",
+    "category": "feedback_error_states",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Offer offline/network-loss messaging distinct from a generic error when connectivity is the actual cause.",
+    "avoid": "Showing a misleading 'server error' message when the real cause is the user's own lost connection."
+  },
+  {
+    "id": "ux_content_1",
+    "category": "content",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Define an explicit, helpful empty state (icon/illustration, message, next action) for every list or collection view.",
+    "avoid": "A blank screen with no explanation the first time a user has no data yet."
+  },
+  {
+    "id": "ux_content_2",
+    "category": "content",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Write microcopy (button labels, tooltips, errors) in plain, specific, active language.",
+    "avoid": "Vague labels like 'Submit' or 'OK' where a specific verb ('Save Draft', 'Delete 3 Items') would remove ambiguity."
+  },
+  {
+    "id": "ux_content_3",
+    "category": "content",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Truncate long content predictably (with ellipsis + full text on hover/expand) rather than letting it break layout.",
+    "avoid": "Unbounded text silently overflowing its container or forcing layout reflow across sibling elements."
+  },
+  {
+    "id": "ux_content_4",
+    "category": "content",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Keep a comfortable reading measure (roughly 50-75 characters per line) for any substantial body text.",
+    "avoid": "Full-viewport-width paragraphs on wide desktop screens forcing very long, fatiguing line lengths."
+  },
+  {
+    "id": "ux_content_5",
+    "category": "content",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Use sentence case consistently for UI labels unless the product has an explicit, deliberate title-case brand voice.",
+    "avoid": "Randomly mixed case conventions across buttons, headings, and menu items within the same product."
+  },
+  {
+    "id": "ux_touch_1",
+    "category": "touch_targets",
+    "priority": 1,
+    "impact": "CRITICAL",
+    "must": "Size every interactive control at least 44x44px (iOS) / 48x48dp (Android), including invisible padding, not just the visible glyph.",
+    "avoid": "Icon buttons sized to their 16-20px glyph alone with no padding expanding the hit area."
+  },
+  {
+    "id": "ux_touch_2",
+    "category": "touch_targets",
+    "priority": 2,
+    "impact": "HIGH",
+    "must": "Leave adequate spacing between adjacent tappable targets (roughly 8px minimum) to prevent mis-taps.",
+    "avoid": "Tightly packed icon buttons or list-row actions with no gap, especially on mobile."
+  },
+  {
+    "id": "ux_touch_3",
+    "category": "touch_targets",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Keep primary mobile actions within comfortable thumb reach (lower half of the screen) where the platform convention allows it.",
+    "avoid": "Placing the single most-used action in a far top corner on a large-screen mobile device."
+  },
+  {
+    "id": "ux_touch_4",
+    "category": "touch_targets",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Provide larger touch targets for destructive or hard-to-undo actions rather than smaller, easy-to-mis-tap ones.",
+    "avoid": "A tiny delete icon squeezed next to other icons where a slip becomes destructive."
+  },
+  {
+    "id": "ux_touch_5",
+    "category": "touch_targets",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Ensure hover-only affordances (desktop) have a touch-equivalent reveal method on mobile.",
+    "avoid": "Actions that only appear on :hover with no tap/long-press equivalent, making them undiscoverable on touch devices."
+  },
+  {
+    "id": "ux_density_1",
+    "category": "data_density",
+    "priority": 1,
+    "impact": "HIGH",
+    "must": "Match information density to the tool's actual usage pattern \u2014 dense for daily power-user tools, spacious for infrequent/consumer use.",
+    "avoid": "A dashboard-dense layout applied to a casual consumer app used a few minutes a week, overwhelming the user."
+  },
+  {
+    "id": "ux_density_2",
+    "category": "data_density",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Let users scan a data table's key column(s) without horizontal scrolling on its primary target viewport.",
+    "avoid": "The single most important column requiring a horizontal scroll to even see on first load."
+  },
+  {
+    "id": "ux_density_3",
+    "category": "data_density",
+    "priority": 2,
+    "impact": "MEDIUM",
+    "must": "Use consistent row heights and column alignment (numbers right-aligned, text left-aligned) in dense tabular views.",
+    "avoid": "Inconsistent alignment that makes columns of numbers hard to scan and compare at a glance."
+  },
+  {
+    "id": "ux_density_4",
+    "category": "data_density",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Offer a density toggle (comfortable/compact) when a tool genuinely serves both power users and occasional users.",
+    "avoid": "Forcing every user into one fixed density regardless of how differently they actually use the tool."
+  },
+  {
+    "id": "ux_density_5",
+    "category": "data_density",
+    "priority": 3,
+    "impact": "MEDIUM",
+    "must": "Progressively disclose secondary detail (expand-on-demand) rather than showing every field for every row at once.",
+    "avoid": "A table showing 20+ columns simultaneously when most rows only need 5-6 for a typical task."
+  }
+]
