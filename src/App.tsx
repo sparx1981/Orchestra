@@ -9811,11 +9811,14 @@ Respond with ONLY a raw JSON object (no markdown, no commentary) in exactly this
                                                     {entry.severity}
                                                   </Badge>
                                                   <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{entry.match_type}</span>
-                                                  <span className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
+                                                  {/* Wraps rather than truncates — a pattern-library term or description is the whole
+                                                      point of this row, so clipping it would hide the one thing the user is here to
+                                                      check (see the harden checklist's explicit callout for this exact case). */}
+                                                  <span className="text-xs font-medium text-slate-700 dark:text-slate-200 break-words min-w-0">
                                                     {entry.terms && entry.terms.length > 0 ? entry.terms.slice(0, 3).join(", ") + (entry.terms.length > 3 ? ` +${entry.terms.length - 3} more` : "") : entry.description}
                                                   </span>
                                                 </div>
-                                                {entry.suggested_fix && <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">{entry.suggested_fix}</p>}
+                                                {entry.suggested_fix && <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 break-words">{entry.suggested_fix}</p>}
                                               </div>
                                               <div className="flex items-center gap-1 flex-shrink-0">
                                                 <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => openSqpEditEntryForm(entry)} title="Edit">

@@ -179,12 +179,22 @@ export const HISTORY_REVISION_CONTENT_CAP = 8000;
 // However small a section's fair share of the budget works out to, never cut it below this —
 // guarantees no section is ever blanked to near-nothing even in a genuinely enormous spec.
 const MIN_SECTION_CONTENT_FLOOR_CHARS = 20000;
+// The Specification Quality Pass's `rewrite` field (see SpecQualityReviewResult) is, by
+// design, a full rewritten copy of the entire spec's text — on a large spec it can rival or
+// exceed the sum of every section's own content, yet it's a disposable/regeneratable
+// suggestion (the user can always re-run SQP), never primary authored content. Capped
+// unconditionally whenever trimming kicks in, same as revision history, so it can never be
+// the thing that silently pushes an otherwise-in-budget document over Firestore's real limit.
+const HISTORY_QUALITY_REWRITE_CAP = 20000;
 
 /**
  * Returns a version of `spec` safe to write to a single Firestore document, trimming as
  * little as possible: revisions and section content are left completely untouched unless the
  * document as a whole is actually over budget, in which case section content is trimmed
  * proportionally (largest sections lose the most) rather than by a flat per-section cutoff.
+ * The SQP `qualityReview.rewrite` field — a full second copy of the spec's text, see
+ * HISTORY_QUALITY_REWRITE_CAP above — is capped the same way revision history is: only once
+ * trimming is already happening, never on an otherwise-in-budget document.
  */
 export function capSpecForHistoryStorage(spec: ProductSpec): { spec: ProductSpec; wasTrimmed: boolean } {
   const fullSize = JSON.stringify(spec).length;
@@ -197,7 +207,15 @@ export function capSpecForHistoryStorage(spec: ProductSpec): { spec: ProductSpec
     revisionHistory: (s.revisionHistory || []).map(r => ({ ...r, content: truncateText(r.content, HISTORY_REVISION_CONTENT_CAP) })),
   }));
 
-  const overheadSize = JSON.stringify({ ...spec, sections: sectionsWithCappedRevisions.map(s => ({ ...s, content: "" })) }).length;
+  const cappedQualityReview = spec.qualityReview && spec.qualityReview.rewrite
+    ? { ...spec.qualityReview, rewrite: truncateText(spec.qualityReview.rewrite, HISTORY_QUALITY_REWRITE_CAP) }
+    : spec.qualityReview;
+
+  const overheadSize = JSON.stringify({
+    ...spec,
+    qualityReview: cappedQualityReview,
+    sections: sectionsWithCappedRevisions.map(s => ({ ...s, content: "" })),
+  }).length;
   const sectionCount = Math.max(sectionsWithCappedRevisions.length, 1);
   const contentBudget = Math.max(SAFE_HISTORY_DOC_BUDGET_CHARS - overheadSize, MIN_SECTION_CONTENT_FLOOR_CHARS * sectionCount);
   const totalContentSize = sectionsWithCappedRevisions.reduce((sum, s) => sum + (s.content?.length || 0), 0);
@@ -210,7 +228,7 @@ export function capSpecForHistoryStorage(spec: ProductSpec): { spec: ProductSpec
     return raw.length > perSectionCap ? { ...s, content: truncateText(raw, perSectionCap) } : s;
   });
 
-  return { spec: { ...spec, sections: cappedSections }, wasTrimmed: true };
+  return { spec: { ...spec, qualityReview: cappedQualityReview, sections: cappedSections }, wasTrimmed: true };
 }
 
 /** True if saving this spec to Chat History would trim anything — i.e. the full-fidelity

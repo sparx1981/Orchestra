@@ -311,6 +311,27 @@ export function ProductTab({
   const [copiedType, setCopiedType] = useState<string | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Aborts the background Specification Quality Pass specifically (see the SQP block in
+  // handleGenerateSpec) — separate from abortControllerRef above because SQP is deliberately
+  // fired AFTER the main generation's own controller is already torn down in `finally`, so it
+  // needs its own lifetime: cancelled if a NEW spec starts generating while a previous spec's
+  // pass is still in flight (no point paying for a result nothing will read — the setSpec
+  // guard below already stops it from landing on the wrong spec, this just stops the wasted
+  // call/cost too), and cancelled on unmount so navigating away from the Product tab doesn't
+  // leave a request running against a component that's gone.
+  const qualityAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Cancels any in-flight background Specification Quality Pass when the Product tab itself
+  // unmounts (e.g. the user switches to a different top-level tab while a pass is running) —
+  // without this, the fetch/call keeps running and, on resolution, calls setSpec against a
+  // component no longer on screen. The main generation's abortControllerRef doesn't need the
+  // same treatment here: it's already scoped to a `finally` that runs before this effect could
+  // ever see it stale, and Stop Drafting already covers the user-initiated cancel path.
+  useEffect(() => {
+    return () => {
+      qualityAbortControllerRef.current?.abort();
+    };
+  }, []);
 
   // Use team configured in the left panel
   const effectiveTeam = customTeam && customTeam.length > 0 ? customTeam : DEFAULT_PRODUCT_AGENTS;
@@ -697,6 +718,11 @@ Respond with ONLY a raw JSON object, no markdown fences, no commentary:
   // Generate High-Detail Product Spec
   const runSpecGeneration = async (preflight: ProductSpecPreflightQuestion[]) => {
     if (!prompt.trim() || effectiveTeam.length === 0) return;
+
+    // A brand-new generation makes any still-running background SQP pass from the PREVIOUS
+    // spec immediately stale — stop paying for it now rather than waiting for it to finish
+    // (or be superseded later, once the new spec's own SQP pass fires) before cancelling it.
+    qualityAbortControllerRef.current?.abort();
 
     setIsGenerating(true);
     setSpec(null);
@@ -1321,12 +1347,20 @@ Keep "conflicts" to genuine contradictions only — empty array is a fine and co
         const specTextForQuality = draftedSections.map(s => `## ${s.heading}\n\n${s.content}`).join("\n\n---\n\n");
         setSpec(prev => (prev && prev.id === qualitySpecId ? { ...prev, qualityReviewPending: true } : prev));
         const { qaAgent: sqpReviewer } = pickAgentRoles();
-        runSpecQualityPass(specTextForQuality, sqpPatternLibrary, sqpThresholds, sqpReviewer, callAgent)
+        // Cancel any previous spec's still-running SQP pass before starting this one — only
+        // one background pass is ever worth paying for at a time, and the setSpec guards below
+        // (matching qualitySpecId) already mean a superseded pass's result would be discarded
+        // on arrival anyway.
+        qualityAbortControllerRef.current?.abort();
+        const qualityController = new AbortController();
+        qualityAbortControllerRef.current = qualityController;
+        runSpecQualityPass(specTextForQuality, sqpPatternLibrary, sqpThresholds, sqpReviewer, callAgent, qualityController.signal)
           .then(result => {
             setSpec(prev => (prev && prev.id === qualitySpecId ? { ...prev, qualityReview: result, qualityReviewPending: false } : prev));
             logDebug("info", "Specification Quality Pass complete", `Gate: ${result.gate_status} — AI-Likeness ${result.scores.ai_likeness}, Testability ${result.scores.testability}, Completeness ${result.scores.completeness}`);
           })
           .catch(e => {
+            if (qualityController.signal.aborted) return; // superseded or unmounted — nothing to report
             logDebug("warn", "Specification Quality Pass failed — the spec is still complete without it", e?.message || e);
             setSpec(prev => (prev && prev.id === qualitySpecId ? { ...prev, qualityReviewPending: false } : prev));
           });
